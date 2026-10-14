@@ -109,6 +109,23 @@ export interface Usage {
   updated_at?: string;
 }
 
+export interface PermissionRow {
+  id: number;
+  workspace_id: string;
+  agent_id: string;
+  run_id: number | null;
+  thread_id: string | null;
+  tool_name: string;
+  input: Record<string, any> | null;
+  rule: string | null;
+  state: "pending" | "allowed" | "denied" | "expired";
+  remember: boolean;
+  reason: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+export interface Settings { allow_host_runners: boolean; [k: string]: unknown }
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -151,6 +168,11 @@ export const api = {
     request<Message>(`/api/threads/${enc(threadId)}/messages`, { method: "POST", body: JSON.stringify(b) }),
   closeThread: (threadId: string, b: { state: "done" | "cancelled"; note?: string }) =>
     request<void>(`/api/threads/${enc(threadId)}/close`, { method: "POST", body: JSON.stringify(b) }),
+  settings: () => request<Settings>("/api/settings"),
+  patchSettings: (b: { allow_host_runners: boolean }) => request<Settings>("/api/settings", { method: "PATCH", body: JSON.stringify(b) }),
+  permissions: (ws: string) => request<PermissionRow[]>(`/api/workspaces/${enc(ws)}/permissions?state=pending`),
+  decidePermission: (id: number, b: { decision: "allow" | "deny"; remember?: boolean; reason?: string }) =>
+    request<PermissionRow>(`/api/permissions/${enc(String(id))}/decide`, { method: "POST", body: JSON.stringify(b) }),
   reopenThread: (threadId: string, note: string) =>
     request<void>(`/api/threads/${enc(threadId)}/reopen`, { method: "POST", body: JSON.stringify({ note }) }),
 };

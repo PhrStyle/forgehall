@@ -1,5 +1,8 @@
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api } from "../api";
 import { useApp } from "../context";
-import { Chip, ModelChip, PreviewBadge } from "../ui";
+import { useSettings } from "../queries";
+import { Chip, ErrorBox, ModelChip, PreviewBadge } from "../ui";
 
 const RULES: [string, string, "haiku" | "sonnet" | "opus" | "agent", string][] = [
   ["1", "The agent called `escalate` on this thread", "opus", "high"],
@@ -9,6 +12,31 @@ const RULES: [string, string, "haiku" | "sonnet" | "opus" | "agent", string][] =
   ["5", "Anything else (`request`, `verify`, `decision`, `approval`)", "agent", "medium"],
 ];
 
+function IsolationSection() {
+  const qc = useQueryClient();
+  const q = useSettings();
+  const m = useMutation({
+    mutationFn: (v: boolean) => api.patchSettings({ allow_host_runners: v }),
+    onSuccess: (s) => qc.setQueryData(["settings"], s),
+  });
+  const on = q.data?.allow_host_runners ?? false;
+  return (
+    <>
+      <div className="section-title"><span>Agent isolation</span></div>
+      <div className="switch-row">
+        <div className="txt">
+          <b id="host-runners-label">Allow agents directly on this machine</b>
+          <span className="muted" id="host-runners-desc">Agents run isolated (container now, VM later). A runner started directly on this machine is refused.</span>
+        </div>
+        <button type="button" role="switch" className="switch" aria-checked={on} aria-labelledby="host-runners-label" aria-describedby="host-runners-desc"
+          disabled={!q.data || m.isPending} onClick={() => m.mutate(!on)} />
+      </div>
+      {on && <div className="warnbox" role="status">Agents started outside a container or VM will be accepted, and every action they take will need your approval here.</div>}
+      <div style={{ maxWidth: 700, marginTop: 8 }}><ErrorBox error={m.error ?? q.error} /></div>
+    </>
+  );
+}
+
 export function Settings() {
   const app = useApp();
   const busUrl = import.meta.env.VITE_BUS_LABEL ?? "http://127.0.0.1:4545";
@@ -16,6 +44,7 @@ export function Settings() {
     <>
       <div className="main-head"><div className="title-row"><h1>Settings</h1></div><div /></div>
       <div className="main-body">
+        <IsolationSection />
         <PreviewBadge />
         <div className="section-title"><span>Bus</span></div>
         <div className="kv">

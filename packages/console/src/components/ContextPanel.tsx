@@ -1,6 +1,7 @@
 import { Link, useMatch } from "react-router-dom";
 import { useApp } from "../context";
-import { useAgents, useThreads, useUsage } from "../queries";
+import { useAgents, usePermissions, useThreads, useUsage } from "../queries";
+import { PermissionList } from "./PermissionCard";
 import { Meter, ModelChip } from "../ui";
 import { ago, inFuture, pct } from "../util";
 
@@ -9,6 +10,7 @@ export function ContextPanel() {
   const usage = useUsage(app.workspace);
   const threads = useThreads(app.workspace);
   const agents = useAgents(app.workspace);
+  const perms = usePermissions(app.workspace).data ?? [];
   const match = useMatch("/agents/:id");
   const u = usage.data ?? {};
   const hasUsage = u.five_hour != null || u.seven_day != null;
@@ -38,8 +40,9 @@ export function ContextPanel() {
       </section>
 
       <section>
-        <h4>Waiting on you <span className="faint mono">{waiting.length}</span></h4>
-        {waiting.length === 0 ? <p className="empty">Nothing is waiting for you.</p> : (
+        <h4>Waiting on you <span className="faint mono">{waiting.length + perms.length}</span></h4>
+        <PermissionList items={perms} compact />
+        {waiting.length === 0 && perms.length === 0 ? <p className="empty">Nothing is waiting for you.</p> : waiting.length === 0 ? null : (
           <div className="ctx-list">
             {waiting.slice(0, 8).map((t) => (
               <Link key={t.id} to={`/threads/${t.id}`} className="ctx-row">

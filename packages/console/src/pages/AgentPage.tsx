@@ -4,7 +4,8 @@ import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
 import { EventView, RunHeader } from "../components/RunFeed";
 import { SamplePanels, type SampleTab } from "../components/Samples";
-import { useAgents, useRuns, useRunsEvents } from "../queries";
+import { PermissionList } from "../components/PermissionCard";
+import { useAgents, usePermissions, useRuns, useRunsEvents } from "../queries";
 import { Avatar, Chip, ErrorBox, ModelChip, StatusChip } from "../ui";
 import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
@@ -45,6 +46,7 @@ export function AgentPage() {
 function Activity({ agentId }: { agentId: string }) {
   const app = useApp();
   const runsQ = useRuns(app.workspace);
+  const perms = (usePermissions(app.workspace).data ?? []).filter((x) => x.agent_id === agentId);
   const mine = (runsQ.data ?? []).filter((r) => r.agent_id === agentId).slice(0, 5).reverse();
   const events = useRunsEvents(mine);
   const body = useRef<HTMLDivElement>(null);
@@ -54,6 +56,7 @@ function Activity({ agentId }: { agentId: string }) {
 
   return (
     <div className="main-body" ref={body} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
+      <PermissionList items={perms} />
       <ErrorBox error={runsQ.error ?? events.find((q) => q.error)?.error} />
       {runsQ.isSuccess && mine.length === 0 ? (
         <div className="empty-state"><h3>No activity yet</h3><p>This agent has not run. Send it a task and its runs show up here as they happen.</p><button className="btn primary" onClick={() => app.openNewTask(agentId)}>Send a task</button></div>

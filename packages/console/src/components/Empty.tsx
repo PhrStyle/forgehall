@@ -9,7 +9,7 @@ export function NoWorkspace() {
         <div className="empty-state">
           <h3>The bus is not reachable</h3>
           <p>The console talks to the bus through the dev server proxy. Start it from the repository root:</p>
-          <div className="term"><span className="p">$</span> node packages/bus/dist/index.js</div>
+          <div className="term"><span className="p">$</span> docker compose -f infra/docker/compose.yaml -p forgehall up -d</div>
         </div>
       </div>
     );

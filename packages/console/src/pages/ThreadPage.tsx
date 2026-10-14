@@ -3,7 +3,8 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { api, HUMAN, type Approval, type BranchDiff, type Message, type MessageType, type Run } from "../api";
-import { useAgents, useApprovals, useDiff, useThread } from "../queries";
+import { PermissionList } from "../components/PermissionCard";
+import { useAgents, useApprovals, useDiff, usePermissions, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
@@ -15,7 +16,9 @@ type Item = { kind: "msg"; at: number; m: Message } | { kind: "run"; at: number;
 export function ThreadPage() {
   const { id } = useParams();
   const q = useThread(id);
-  const agents = useAgents(useApp().workspace).data ?? [];
+  const ws = useApp().workspace;
+  const agents = useAgents(ws).data ?? [];
+  const perms = (usePermissions(ws).data ?? []).filter((x) => x.thread_id === id);
   const nameOf = (a: string) => (a === HUMAN ? "You" : agents.find((x) => x.id === a)?.name ?? a);
 
   const items = useMemo<Item[]>(() => {
@@ -64,6 +67,7 @@ export function ThreadPage() {
         <OfflineRunnerBanner runs={runs} agents={agents} workspace={thread.workspace_id} />
         <div className="thread-grid">
           <div className="main-col">
+          <PermissionList items={perms} />
           {hasRepo && <ChangesCard threadId={thread.id} />}
           <div className="tl">
             {items.map((it) => it.kind === "run" ? <RunMark key={`r${it.r.id}`} r={it.r} /> : (
@@ -392,9 +396,9 @@ function OfflineRunnerBanner({ runs, agents, workspace }: { runs: Run[]; agents:
   return (
     <div className="banner warn" role="status">
       <b>{offline.map((a) => a.name).join(" and ")} {offline.length > 1 ? "have" : "has"} work queued but no runner connected.</b>
-      <span> Nothing happens until a runner starts. In the repository folder:</span>
+      <span> Nothing happens until a runner starts. In the repository folder (<code>fh agent run &lt;ws&gt; &lt;agent&gt;</code> works too):</span>
       {offline.map((a) => (
-        <code key={a.id} className="term">AGENT_TOKEN=$(node packages/bus/dist/cli.js agent token {workspace} {a.id}) node packages/runner/dist/index.js</code>
+        <code key={a.id} className="term">node packages/bus/dist/cli.js agent run {workspace} {a.id}</code>
       ))}
     </div>
   );

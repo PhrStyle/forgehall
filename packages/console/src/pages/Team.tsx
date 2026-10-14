@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
 import { ThreadRow } from "../components/ThreadRow";
-import { useAgents, useThreads, useUsage } from "../queries";
+import { useAgents, usePermissions, useThreads, useUsage } from "../queries";
 import { Avatar, ErrorBox, ModelChip, StatusChip } from "../ui";
 import { agentStatus, ago, inFuture, isOpen, pct } from "../util";
 
@@ -12,13 +12,15 @@ export function Team() {
   const agents = useAgents(ws);
   const threads = useThreads(ws);
   const usage = useUsage(ws);
+  const perms = usePermissions(ws).data ?? [];
   if (!ws) return <NoWorkspace />;
 
   const a = agents.data ?? [];
   const t = threads.data ?? [];
   const running = a.filter((x) => x.run_id).length;
   const open = t.filter((x) => isOpen(x.state)).length;
-  const waiting = t.filter((x) => x.waiting_on_you).length;
+  const waitingThreads = t.filter((x) => x.waiting_on_you).length;
+  const waiting = waitingThreads + perms.length;
   const u = usage.data ?? {};
 
   return (
@@ -36,7 +38,7 @@ export function Team() {
         <div className="stats">
           <div className="stat"><div className="k">Agents running</div><div className="v">{running}<span className="faint" style={{ fontSize: 14 }}> / {a.length}</span></div><div className="s">{a.filter((x) => agentStatus(x) === "error").length} with a failed last run</div></div>
           <div className="stat"><div className="k">Threads open</div><div className="v">{open}</div><div className="s">{t.length} in total</div></div>
-          <div className="stat"><div className="k">Waiting on you</div><div className="v" style={waiting ? { color: "var(--warn)" } : undefined}>{waiting}</div><div className="s">threads with a message for you</div></div>
+          <div className="stat"><div className="k">Waiting on you</div><div className="v" style={waiting ? { color: "var(--warn)" } : undefined}>{waiting}</div><div className="s">{perms.length ? `${waitingThreads} thread${waitingThreads === 1 ? "" : "s"} · ${perms.length} permission${perms.length === 1 ? "" : "s"}` : "threads with a message for you"}</div></div>
           <div className="stat"><div className="k">Weekly usage</div><div className="v">{pct(u.seven_day)}</div><div className="s">{u.seven_day_resets_at ? `resets ${inFuture(u.seven_day_resets_at)}` : "no reading yet"}</div></div>
         </div>
 

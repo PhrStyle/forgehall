@@ -1,7 +1,7 @@
 import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { AppProvider, useApp } from "./context";
 import { LiveProvider, useLiveStatus } from "./live";
-import { useAgents, useThreads } from "./queries";
+import { useAgents, usePermissions, useThreads } from "./queries";
 import { Avatar, Icon, StatusChip } from "./ui";
 import { agentStatus } from "./util";
 import { ContextPanel } from "./components/ContextPanel";
@@ -52,7 +52,7 @@ function Shell() {
       <main className="main">
         {app.offline && (
           <div className="banner" role="alert">
-            <span>Bus offline at 127.0.0.1:4545 — start it with <code>node packages/bus/dist/index.js</code></span>
+            <span>Bus offline at 127.0.0.1:4545 — start the stack with <code>docker compose -f infra/docker/compose.yaml -p forgehall up -d</code></span>
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 24px 0" }}>
@@ -81,6 +81,7 @@ function Side() {
   const agents = useAgents(app.workspace);
   const match = useMatch("/agents/:id");
   const list = agents.data ?? [];
+  const pendingBy = new Set((usePermissions(app.workspace).data ?? []).map((x) => x.agent_id));
   const running = list.filter((a) => a.run_id).length;
 
   return (
@@ -99,7 +100,7 @@ function Side() {
               <NavLink to={`/agents/${a.id}`} className={`agent-row ${match?.params.id === a.id ? "active" : ""}`} aria-current={match?.params.id === a.id ? "true" : undefined}>
                 <Avatar id={a.id} name={a.name} status={st} />
                 <div style={{ minWidth: 0 }}>
-                  <div className="nm"><span>{a.name}</span><span className="role">{a.role}</span></div>
+                  <div className="nm"><span>{a.name}</span>{pendingBy.has(a.id) && <i className="perm-dot" title="Waiting for your permission" aria-label="Has a pending permission request" />}<span className="role">{a.role}</span></div>
                   <div className="sub">{a.run_thread ? `Working on ${a.run_thread}` : a.queued ? `${a.queued} queued` : st === "error" ? "Last run failed" : "Idle"}</div>
                 </div>
                 <StatusChip s={st} />
