@@ -1,0 +1,11 @@
+{
+  "name": "@forgehall/console",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"console: not yet\"",
+    "typecheck": "echo \"console: not yet\"",
+    "test": "echo \"console: not yet\""
+  }
+}
