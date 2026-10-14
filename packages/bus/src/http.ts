@@ -72,6 +72,13 @@ export function buildHttp(store: Store, opts: HttpOptions): FastifyInstance {
     return reply.code(204).send();
   });
 
+  app.post<{ Params: { id: string } }>("/runner/runs/:id/heartbeat", async (req, reply) => {
+    const agent = await agentOf(req);
+    if (!agent) return reply.code(401).send({ error: "invalid agent token" });
+    await store.heartbeat(agent, Number(req.params.id));
+    return reply.code(204).send();
+  });
+
   app.post<{ Params: { id: string } }>("/runner/runs/:id/finish", async (req, reply) => {
     const agent = await agentOf(req);
     if (!agent) return reply.code(401).send({ error: "invalid agent token" });

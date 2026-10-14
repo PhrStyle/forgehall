@@ -72,6 +72,10 @@ export class Runner {
       return flushing;
     };
     const timer = setInterval(() => void flush(), 1000);
+    // Liveness even when the engine is silent for a while (long tool calls).
+    const heartbeat = setInterval(() => {
+      this.call(`/runner/runs/${claim.runId}/heartbeat`).catch((e) => console.error(`[runner] heartbeat: ${(e as Error).message}`));
+    }, 30_000);
 
     const result = await this.engine.run({
       claim,
@@ -84,6 +88,7 @@ export class Runner {
       },
     });
     clearInterval(timer);
+    clearInterval(heartbeat);
     await flush();
 
     const res = await this.call(`/runner/runs/${claim.runId}/finish`, result);

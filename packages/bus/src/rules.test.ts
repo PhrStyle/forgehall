@@ -39,6 +39,11 @@ describe("nextState", () => {
     expect(nextState("awaiting_approval", "decision", null)).toBe("in_progress");
   });
 
+  it("resumes a blocked thread on any new message except a notice", () => {
+    expect(nextState("blocked", "answer", null)).toBe("in_progress");
+    expect(nextState("blocked", "notify", null)).toBe("blocked");
+  });
+
   it("never reopens finished threads", () => {
     expect(nextState("done", "request", null)).toBe("done");
     expect(nextState("cancelled", "verify", null)).toBe("cancelled");

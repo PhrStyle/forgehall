@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { HUMAN, type MessageType, type Model, type Outcome, type RunClaim, type RunEvent, type RunFinish, type ThreadState } from "@forgehall/shared";
+import { HUMAN, SYSTEM, type MessageType, type Model, type Outcome, type RunClaim, type RunEvent, type RunFinish, type ThreadState } from "@forgehall/shared";
 import type postgres from "postgres";
 import type { Sql } from "./db.js";
 
@@ -45,7 +45,26 @@ export class BusError extends Error {}
 
 const DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"];
 
+/** Consecutive failed runs of one agent on one thread before the thread is blocked. */
+export const MAX_ATTEMPTS = 3;
+const RETRY_BASE_SECONDS = 30;
+/** Failures a retry cannot fix (missing login, revoked credentials). */
+const FATAL_ERROR = /not logged in|\/login|invalid api key|authentication|unauthorized|oauth token/i;
+
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
+
+/** Change notifications for live views (console SSE). Payloads stay small: ids only. */
+export type Change =
+  | { kind: "thread"; workspace: string; thread: string }
+  | { kind: "message"; workspace: string; thread: string; message: string }
+  | { kind: "run"; workspace: string; thread: string; run: number; state: string }
+  | { kind: "run_event"; workspace: string; run: number };
+
+export const CHANGES_CHANNEL = "forgehall_changes";
+
+async function notify(tx: Tx, change: Change): Promise<void> {
+  await tx`SELECT pg_notify(${CHANGES_CHANNEL}, ${JSON.stringify(change)})`;
+}
 
 export class Store {
   constructor(readonly sql: Sql) {}
@@ -93,6 +112,7 @@ export class Store {
   async createThread(t: { workspaceId: string; title: string; createdBy: string; assignee: string; severity?: string | null }): Promise<ThreadRow> {
     const [row] = await this.sql<ThreadRow[]>`INSERT INTO threads (workspace_id, title, created_by, assignee, severity)
       VALUES (${t.workspaceId}, ${t.title}, ${t.createdBy}, ${t.assignee}, ${t.severity ?? null}) RETURNING *`;
+    await notify(this.sql, { kind: "thread", workspace: row!.workspace_id, thread: row!.id });
     return row!;
   }
 
@@ -135,7 +155,9 @@ export class Store {
         VALUES (${m.workspaceId}, ${m.threadId}, ${m.type}, ${m.from}, ${m.to}, ${m.body}, ${m.outcome ?? null}, ${m.replyTo ?? null}) RETURNING *`;
       const next = nextState(thread.state, m.type, m.outcome ?? null);
       await tx`UPDATE threads SET state = ${next}, updated_at = now() WHERE id = ${m.threadId}`;
-      if (m.to !== HUMAN) await this.enqueue(tx, thread, m.to, m.type);
+      // Notices ride along with the recipient's next run instead of waking it up.
+      if (m.to !== HUMAN && m.type !== "notify") await this.enqueue(tx, thread, m.to, m.type);
+      await notify(tx, { kind: "message", workspace: m.workspaceId, thread: m.threadId, message: msg!.id });
       return msg!;
     });
   }
@@ -148,7 +170,7 @@ export class Store {
   // ---------- runs ----------
 
   /** Queues a run unless one is already waiting for the same agent and thread. */
-  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType): Promise<void> {
+  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType, delaySeconds = 0): Promise<void> {
     const [waiting] = await tx`SELECT id FROM runs WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'queued'`;
     if (waiting) return;
     const [agent] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${thread.workspace_id} AND id = ${agentId}`;
@@ -161,8 +183,9 @@ export class Store {
       failures,
       escalation: thread.flags.escalate?.[agentId] ?? null,
     });
-    await tx`INSERT INTO runs (workspace_id, agent_id, thread_id, model, effort, route_reason, priority)
-      VALUES (${thread.workspace_id}, ${agentId}, ${thread.id}, ${r.model}, ${r.effort}, ${r.reason}, ${r.priority})`;
+    await tx`INSERT INTO runs (workspace_id, agent_id, thread_id, model, effort, route_reason, priority, not_before)
+      VALUES (${thread.workspace_id}, ${agentId}, ${thread.id}, ${r.model}, ${r.effort}, ${r.reason}, ${r.priority},
+        ${delaySeconds > 0 ? tx`now() + make_interval(secs => ${delaySeconds})` : null})`;
   }
 
   /**
@@ -181,9 +204,11 @@ export class Store {
       const [run] = await tx<{ id: string; thread_id: string; model: Model; effort: "low" | "medium" | "high"; route_reason: string }[]>`
         SELECT id, thread_id, model, effort, route_reason FROM runs
         WHERE workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} AND state = 'queued'
+          AND (not_before IS NULL OR not_before <= now())
         ORDER BY priority, queued_at LIMIT 1 FOR UPDATE SKIP LOCKED`;
       if (!run) return null;
-      await tx`UPDATE runs SET state = 'running', started_at = now() WHERE id = ${run.id}`;
+      await tx`UPDATE runs SET state = 'running', started_at = now(), heartbeat_at = now() WHERE id = ${run.id}`;
+      await notify(tx, { kind: "run", workspace: agent.workspace_id, thread: run.thread_id, run: Number(run.id), state: "running" });
       const pending = await tx<MessageRow[]>`UPDATE messages SET delivered_run = ${run.id}
         WHERE thread_id = ${run.thread_id} AND to_actor = ${agent.id} AND delivered_run IS NULL RETURNING *`;
       pending.sort((a, b) => Number(a.id) - Number(b.id));
@@ -216,6 +241,8 @@ export class Store {
       const next = (await tx<{ next: number }[]>`SELECT coalesce(max(seq), 0) + 1 AS next FROM run_events WHERE run_id = ${runId}`)[0]!.next;
       const rows = events.map((e, i) => ({ run_id: runId, seq: next + i, kind: e.kind, payload: tx.json(e.payload as never) }));
       await tx`INSERT INTO run_events ${tx(rows, "run_id", "seq", "kind", "payload")}`;
+      await tx`UPDATE runs SET heartbeat_at = now() WHERE id = ${runId}`;
+      await notify(tx, { kind: "run_event", workspace: agent.workspace_id, run: runId });
     });
   }
 
@@ -242,16 +269,111 @@ export class Store {
           ON CONFLICT (workspace_id) DO UPDATE SET five_hour = EXCLUDED.five_hour, five_hour_resets_at = EXCLUDED.five_hour_resets_at,
             seven_day = EXCLUDED.seven_day, seven_day_resets_at = EXCLUDED.seven_day_resets_at, status = EXCLUDED.status, updated_at = now()`;
       }
-      // Messages that arrived while the run was going still need an answer; on failure, the
-      // trigger messages go back to the queue so a retry sees them again.
-      if (!f.ok) await tx`UPDATE messages SET delivered_run = NULL WHERE delivered_run = ${runId}`;
-      const [pending] = await tx<{ type: MessageType }[]>`SELECT type FROM messages
-        WHERE thread_id = ${run.thread_id} AND to_actor = ${agent.id} AND delivered_run IS NULL ORDER BY id LIMIT 1`;
-      if (pending) {
-        const [thread] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${run.thread_id}`;
-        await this.enqueue(tx, thread!, agent.id, pending.type);
-      }
+      await this.afterRun(tx, { workspaceId: agent.workspace_id, agentId: agent.id, threadId: run.thread_id, runId, ok: f.ok, error: f.error });
     });
+  }
+
+  /**
+   * Decides what happens after a run ends. Success: queue a run if messages arrived meanwhile.
+   * Failure: retry with backoff up to MAX_ATTEMPTS, then block the thread and tell the user.
+   * A blocked thread resumes when anyone posts a new message to the agent.
+   */
+  private async afterRun(tx: Tx, r: { workspaceId: string; agentId: string; threadId: string; runId: number; ok: boolean; error: string | null }): Promise<void> {
+    const [thread] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${r.threadId}`;
+    if (r.ok) {
+      const [pending] = await tx<{ type: MessageType }[]>`SELECT type FROM messages
+        WHERE thread_id = ${r.threadId} AND to_actor = ${r.agentId} AND delivered_run IS NULL ORDER BY id LIMIT 1`;
+      if (pending) await this.enqueue(tx, thread!, r.agentId, pending.type);
+    } else {
+      // The messages this run carried go back to the queue so a retry sees them again.
+      await tx`UPDATE messages SET delivered_run = NULL WHERE delivered_run = ${r.runId}`;
+      const recent = await tx<{ state: string }[]>`SELECT state FROM runs
+        WHERE thread_id = ${r.threadId} AND agent_id = ${r.agentId} AND state IN ('done', 'failed') ORDER BY id DESC LIMIT ${MAX_ATTEMPTS}`;
+      const streak = recent.findIndex((x) => x.state !== "failed");
+      const failures = streak === -1 ? recent.length : streak;
+      const fatal = FATAL_ERROR.test(r.error ?? "");
+      const [pending] = await tx<{ type: MessageType }[]>`SELECT type FROM messages
+        WHERE thread_id = ${r.threadId} AND to_actor = ${r.agentId} AND delivered_run IS NULL ORDER BY id LIMIT 1`;
+      if (fatal || failures >= MAX_ATTEMPTS) {
+        await tx`UPDATE threads SET state = 'blocked', updated_at = now() WHERE id = ${r.threadId}`;
+        const why = fatal ? "this cannot be fixed by retrying" : `${failures} attempts in a row failed`;
+        const [msg] = await tx<{ id: string }[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body, delivered_run)
+          VALUES (${r.workspaceId}, ${r.threadId}, 'notify', ${SYSTEM}, ${HUMAN},
+            ${`${r.agentId} stopped working on this thread: ${why}. Last error: ${r.error ?? "unknown"}. Fix the cause, then reply in the thread to retry.`}, NULL)
+          RETURNING id`;
+        await notify(tx, { kind: "message", workspace: r.workspaceId, thread: r.threadId, message: msg!.id });
+      } else if (pending) {
+        await this.enqueue(tx, thread!, r.agentId, pending.type, RETRY_BASE_SECONDS * 2 ** (failures - 1));
+      }
+    }
+    await notify(tx, { kind: "run", workspace: r.workspaceId, thread: r.threadId, run: r.runId, state: r.ok ? "done" : "failed" });
+  }
+
+  async heartbeat(agent: AgentRow, runId: number): Promise<void> {
+    const rows = await this.sql`UPDATE runs SET heartbeat_at = now()
+      WHERE id = ${runId} AND workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} AND state = 'running' RETURNING id`;
+    if (rows.length === 0) throw new BusError(`run ${runId} is not running for this agent`);
+  }
+
+  /**
+   * Fails runs whose runner stopped reporting (crash, kill, lost network) and puts their
+   * messages back in the queue, so the work is retried instead of stuck forever.
+   */
+  async reapStaleRuns(timeoutSeconds: number): Promise<number[]> {
+    return this.sql.begin(async (tx) => {
+      const stale = await tx<{ id: string; workspace_id: string; agent_id: string; thread_id: string }[]>`
+        UPDATE runs SET state = 'failed', ended_at = now(), error = 'runner stopped responding'
+        WHERE state = 'running' AND coalesce(heartbeat_at, started_at) < now() - make_interval(secs => ${timeoutSeconds})
+        RETURNING id, workspace_id, agent_id, thread_id`;
+      for (const r of stale) {
+        await this.afterRun(tx, { workspaceId: r.workspace_id, agentId: r.agent_id, threadId: r.thread_id, runId: Number(r.id), ok: false, error: "runner stopped responding" });
+      }
+      return stale.map((r) => Number(r.id));
+    });
+  }
+
+  // ---------- read models for the console ----------
+
+  async workspaces() {
+    return this.sql<{ id: string; name: string }[]>`SELECT id, name FROM workspaces ORDER BY id`;
+  }
+
+  /** Agents with what they are doing right now, derived from their runs. */
+  async agentsOverview(workspaceId: string) {
+    return this.sql`
+      SELECT a.id, a.name, a.role, a.default_model,
+        cur.id AS run_id, cur.thread_id AS run_thread, cur.model AS run_model, cur.started_at AS run_started_at,
+        (SELECT count(*)::int FROM runs q WHERE q.workspace_id = a.workspace_id AND q.agent_id = a.id AND q.state = 'queued') AS queued,
+        last.state AS last_state, last.error AS last_error, last.ended_at AS last_ended_at,
+        (SELECT count(*)::int FROM runs t WHERE t.workspace_id = a.workspace_id AND t.agent_id = a.id AND t.queued_at > now() - interval '1 day') AS runs_today
+      FROM agents a
+      LEFT JOIN LATERAL (SELECT id, thread_id, model, started_at FROM runs r
+        WHERE r.workspace_id = a.workspace_id AND r.agent_id = a.id AND r.state = 'running' ORDER BY id DESC LIMIT 1) cur ON true
+      LEFT JOIN LATERAL (SELECT state, error, ended_at FROM runs r
+        WHERE r.workspace_id = a.workspace_id AND r.agent_id = a.id AND r.state IN ('done', 'failed') ORDER BY id DESC LIMIT 1) last ON true
+      WHERE a.workspace_id = ${workspaceId}
+      ORDER BY a.id`;
+  }
+
+  async threadsOverview(workspaceId: string) {
+    return this.sql`
+      SELECT t.*,
+        (SELECT count(*)::int FROM messages m WHERE m.thread_id = t.id) AS message_count,
+        (SELECT array_agg(DISTINCT x) FROM (SELECT from_actor AS x FROM messages m WHERE m.thread_id = t.id
+           UNION SELECT to_actor FROM messages m WHERE m.thread_id = t.id) p) AS participants,
+        EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.to_actor = ${HUMAN}
+           AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.thread_id = t.id AND r.from_actor = ${HUMAN} AND r.id > m.id)) AS waiting_on_you
+      FROM threads t WHERE t.workspace_id = ${workspaceId} ORDER BY t.updated_at DESC`;
+  }
+
+  async threadRuns(threadId: string) {
+    return this.sql`SELECT id, agent_id, model, effort, route_reason, state, queued_at, started_at, ended_at,
+        input_tokens, output_tokens, cost_usd, error
+      FROM runs WHERE thread_id = ${threadId} ORDER BY id`;
+  }
+
+  async runEvents(runId: number, afterSeq = 0) {
+    return this.sql`SELECT seq, ts, kind, payload FROM run_events WHERE run_id = ${runId} AND seq > ${afterSeq} ORDER BY seq`;
   }
 
   async runs(workspaceId: string, limit = 20) {
@@ -269,6 +391,8 @@ export class Store {
 /** Thread state machine, driven by message type (docs/ARCHITECTURE.md, "Thread states"). */
 export function nextState(current: ThreadState, type: MessageType, outcome: Outcome | null): ThreadState {
   if (current === "done" || current === "cancelled") return current;
+  // A new message to a blocked thread means someone wants it retried.
+  if (current === "blocked") return type === "notify" ? current : "in_progress";
   switch (type) {
     case "verify":
       return "verifying";
