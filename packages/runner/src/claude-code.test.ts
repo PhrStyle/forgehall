@@ -66,3 +66,28 @@ describe("subscription-only guard", () => {
     expect(r.error).toMatch(/^subscription-only: .*overage/);
   });
 });
+
+describe("prompt delivery", () => {
+  it("sends large prompts through stdin, not argv", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fh-fake-claude-"));
+    const bin = join(dir, "claude");
+    // Echoes how many prompt bytes arrived on stdin, as the result text.
+    await writeFile(bin, `#!/usr/bin/env node
+let n = 0;
+process.stdin.on("data", (d) => { n += d.length; });
+process.stdin.on("end", () => {
+  console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "s1", apiKeySource: "none" }));
+  console.log(JSON.stringify({ type: "result", subtype: "success", session_id: "s1", result: String(n), usage: {} }));
+});
+`);
+    await chmod(bin, 0o755);
+    const prompt = "x".repeat(300_000);
+    let text = "";
+    const r = await new ClaudeCodeEngine(bin, "any").run({
+      claim: { ...claim, prompt }, cwd: tmpdir(), bus: { url: "http://127.0.0.1:1", token: "t" }, env: {},
+      onEvent: (e) => { const p = e.payload as { type?: string; result?: string }; if (p.type === "result") text = p.result ?? ""; },
+    });
+    expect(r.ok).toBe(true);
+    expect(Number(text)).toBe(300_000);
+  });
+});

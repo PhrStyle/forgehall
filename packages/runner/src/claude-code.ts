@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { RateLimitInfo } from "@forgehall/shared";
 import type { Engine, EngineResult, EngineRun } from "./engine.js";
@@ -46,16 +49,20 @@ export class ClaudeCodeEngine implements Engine {
     private readonly billing: BillingMode = "any",
   ) {}
 
-  args(r: EngineRun): string[] {
+  /**
+   * CLI arguments. The prompt goes through stdin and the MCP config (which holds the agent's
+   * bus token) through a private file, so neither shows up in the process list or hits the
+   * per-argument size limit.
+   */
+  args(r: EngineRun, mcpConfigPath: string): string[] {
     const { claim } = r;
-    const mcp = { mcpServers: { bus: { type: "http", url: `${r.bus.url}/mcp`, headers: { Authorization: `Bearer ${r.bus.token}` } } } };
     const args = [
-      "-p", claim.prompt,
+      "-p",
       "--model", MODEL_IDS[claim.model] ?? claim.model,
       "--effort", claim.effort,
       "--output-format", "stream-json",
       "--verbose",
-      "--mcp-config", JSON.stringify(mcp),
+      "--mcp-config", mcpConfigPath,
       "--strict-mcp-config",
       "--permission-mode", "dontAsk",
       "--allowedTools", ["mcp__bus__*", ...claim.allowedTools].join(","),
@@ -65,11 +72,24 @@ export class ClaudeCodeEngine implements Engine {
     return args;
   }
 
-  run(r: EngineRun): Promise<EngineResult> {
+  async run(r: EngineRun): Promise<EngineResult> {
+    const dir = await mkdtemp(join(tmpdir(), "forgehall-run-"));
+    const mcpConfigPath = join(dir, "mcp.json");
+    const mcp = { mcpServers: { bus: { type: "http", url: `${r.bus.url}/mcp`, headers: { Authorization: `Bearer ${r.bus.token}` } } } };
+    await writeFile(mcpConfigPath, JSON.stringify(mcp), { mode: 0o600 });
+    try {
+      return await this.spawnRun(r, mcpConfigPath);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  private spawnRun(r: EngineRun, mcpConfigPath: string): Promise<EngineResult> {
     return new Promise((resolve) => {
       const result: EngineResult = { ok: false, sessionId: r.claim.sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, error: null, rateLimit: null };
-      // stdin closed: headless mode otherwise waits for piped input.
-      const child = spawn(this.bin, this.args(r), { cwd: r.cwd, env: this.billing === "subscription-only" ? subscriptionOnlyEnv(process.env, r.env) : { ...process.env, ...r.env }, stdio: ["ignore", "pipe", "pipe"], signal: r.signal });
+      const child = spawn(this.bin, this.args(r, mcpConfigPath), { cwd: r.cwd, env: this.billing === "subscription-only" ? subscriptionOnlyEnv(process.env, r.env) : { ...process.env, ...r.env }, stdio: ["pipe", "pipe", "pipe"], signal: r.signal });
+      child.stdin.on("error", () => {}); // the engine may exit before reading everything
+      child.stdin.end(r.claim.prompt);
       // subscription-only: stop the moment the engine reports a non-subscription credential or paid overage.
       const refuse = (why: string) => {
         if (this.billing !== "subscription-only" || result.error?.startsWith("subscription-only")) return;
