@@ -44,6 +44,11 @@ describe("nextState", () => {
     expect(nextState("blocked", "notify", null)).toBe("blocked");
   });
 
+  it("closes the thread on complete", () => {
+    expect(nextState("in_progress", "complete", null)).toBe("done");
+    expect(nextState("blocked", "complete", null)).toBe("done");
+  });
+
   it("never reopens finished threads", () => {
     expect(nextState("done", "request", null)).toBe("done");
     expect(nextState("cancelled", "verify", null)).toBe("cancelled");

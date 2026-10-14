@@ -14,6 +14,7 @@ export const MessageType = z.enum([
   "approval",
   "notify",
   "decision",
+  "complete",
 ]);
 export type MessageType = z.infer<typeof MessageType>;
 

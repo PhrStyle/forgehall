@@ -22,6 +22,7 @@ export interface Route {
 const PRIORITY: Record<MessageType, number> = {
   answer: 1,
   decision: 1,
+  complete: 6,
   verify: 3,
   request: 5,
   ask: 4,

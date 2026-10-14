@@ -125,6 +125,22 @@ export function busMcpServer(store: Store, me: AgentRow): McpServer {
   );
 
   server.registerTool(
+    "complete",
+    {
+      description: "Closes a thread you are responsible for, when the work is finished and nothing waits on anyone. Give a short summary of the outcome.",
+      inputSchema: { thread_id: z.string(), summary: z.string().min(3) },
+    },
+    ({ thread_id, summary }) =>
+      guard(async () => {
+        const t = await threadInWs(thread_id);
+        if (t.assignee !== me.id) throw new BusError(`only the assignee (${t.assignee ?? "nobody"}) can complete ${thread_id}; tell them with notify`);
+        if (t.state === "awaiting_approval") throw new BusError(`${thread_id} is waiting for the user's approval; it closes when the user decides`);
+        const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "complete", from: me.id, to: HUMAN, body: summary });
+        return ok(`Thread ${thread_id} completed (message ${m.id}).`);
+      }),
+  );
+
+  server.registerTool(
     "escalate",
     {
       description: "Requests a stronger model for your next turn in this thread. Use when the task is beyond what you can handle well.",

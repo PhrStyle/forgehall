@@ -66,6 +66,11 @@ async function notify(tx: Tx, change: Change): Promise<void> {
   await tx`SELECT pg_notify(${CHANGES_CHANNEL}, ${JSON.stringify(change)})`;
 }
 
+/** Work queued for a thread that just closed will never be needed. */
+async function cancelQueuedRuns(tx: Tx, threadId: string): Promise<void> {
+  await tx`UPDATE runs SET state = 'cancelled', ended_at = now() WHERE thread_id = ${threadId} AND state = 'queued'`;
+}
+
 export class Store {
   constructor(readonly sql: Sql) {}
 
@@ -155,11 +160,38 @@ export class Store {
         VALUES (${m.workspaceId}, ${m.threadId}, ${m.type}, ${m.from}, ${m.to}, ${m.body}, ${m.outcome ?? null}, ${m.replyTo ?? null}) RETURNING *`;
       const next = nextState(thread.state, m.type, m.outcome ?? null);
       await tx`UPDATE threads SET state = ${next}, updated_at = now() WHERE id = ${m.threadId}`;
+      const closed = next === "done" || next === "cancelled";
+      if (closed) await cancelQueuedRuns(tx, m.threadId);
       // Notices ride along with the recipient's next run instead of waking it up.
-      if (m.to !== HUMAN && m.type !== "notify") await this.enqueue(tx, thread, m.to, m.type);
+      if (m.to !== HUMAN && m.type !== "notify" && !closed) await this.enqueue(tx, thread, m.to, m.type);
       await notify(tx, { kind: "message", workspace: m.workspaceId, thread: m.threadId, message: msg!.id });
       return msg!;
     });
+  }
+
+  /** The user closes a thread (done or cancelled), optionally telling the assignee why. */
+  async closeThread(threadId: string, state: "done" | "cancelled", note: string | null): Promise<void> {
+    await this.sql.begin(async (tx) => {
+      const [t] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${threadId} FOR UPDATE`;
+      if (!t) throw new BusError(`thread ${threadId} not found`);
+      if (t.state === "done" || t.state === "cancelled") throw new BusError(`thread ${threadId} is already ${t.state}`);
+      await tx`UPDATE threads SET state = ${state}, updated_at = now() WHERE id = ${threadId}`;
+      await cancelQueuedRuns(tx, threadId);
+      const body = `${state === "done" ? "Marked done" : "Cancelled"} by the user.${note ? ` ${note}` : ""}`;
+      const [msg] = await tx<{ id: string }[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body)
+        VALUES (${t.workspace_id}, ${threadId}, 'notify', ${HUMAN}, ${t.assignee ?? HUMAN}, ${body}) RETURNING id`;
+      await notify(tx, { kind: "message", workspace: t.workspace_id, thread: threadId, message: msg!.id });
+    });
+  }
+
+  /** The user reopens a closed or blocked thread; the note wakes the assignee. */
+  async reopenThread(threadId: string, note: string): Promise<void> {
+    const t = await this.thread(threadId);
+    if (!t) throw new BusError(`thread ${threadId} not found`);
+    if (!["done", "cancelled", "blocked"].includes(t.state)) throw new BusError(`thread ${threadId} is ${t.state}, not closed`);
+    if (!t.assignee || t.assignee === HUMAN) throw new BusError(`thread ${threadId} has no agent assignee to reopen it for`);
+    await this.sql`UPDATE threads SET state = 'in_progress', updated_at = now() WHERE id = ${threadId}`;
+    await this.postMessage({ workspaceId: t.workspace_id, threadId, type: "request", from: HUMAN, to: t.assignee, body: note });
   }
 
   async setEscalation(threadId: string, agentId: string, reason: string): Promise<void> {
@@ -391,6 +423,7 @@ export class Store {
 /** Thread state machine, driven by message type (docs/ARCHITECTURE.md, "Thread states"). */
 export function nextState(current: ThreadState, type: MessageType, outcome: Outcome | null): ThreadState {
   if (current === "done" || current === "cancelled") return current;
+  if (type === "complete") return "done";
   // A new message to a blocked thread means someone wants it retried.
   if (current === "blocked") return type === "notify" ? current : "in_progress";
   switch (type) {

@@ -74,6 +74,19 @@ export async function registerApi(app: FastifyInstance, store: Store): Promise<v
     return reply.code(201).send(msg);
   });
 
+  const Close = z.object({ state: z.enum(["done", "cancelled"]), note: z.string().optional() });
+  app.post<{ Params: { id: string } }>("/api/threads/:id/close", async (req, reply) => {
+    const c = Close.parse(req.body);
+    await store.closeThread(req.params.id, c.state, c.note?.trim() || null);
+    return reply.code(204).send();
+  });
+
+  const Reopen = z.object({ note: z.string().min(1) });
+  app.post<{ Params: { id: string } }>("/api/threads/:id/reopen", async (req, reply) => {
+    await store.reopenThread(req.params.id, Reopen.parse(req.body).note);
+    return reply.code(204).send();
+  });
+
   // Live updates: one SSE stream per console tab, filtered by workspace.
   app.get<{ Querystring: { workspace?: string } }>("/api/events", (req, reply) => {
     const ws = req.query.workspace;
