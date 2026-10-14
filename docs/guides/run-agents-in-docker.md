@@ -44,7 +44,7 @@ docker run -d --name fh-runner-vigil --network forgehall_default \
   forgehall/runner:dev
 ```
 
-Repeat for each agent. If the bus runs on the host instead, bind it to an address the container can reach and pass `-e BUS_URL=...`.
+Repeat for each agent. Add `-e FORGEHALL_BILLING=subscription-only` if the runner must never bill per token (see [Billing](../concepts/workspaces.md#billing)). If the bus runs on the host instead, bind it to an address the container can reach and pass `-e BUS_URL=...`.
 
 ## 5. Check
 

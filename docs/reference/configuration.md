@@ -26,6 +26,7 @@ The bus applies pending migrations at startup.
 | `WORK_ROOT` | `./.work` (under the current directory) | Root of the agent's work area; each thread gets `WORK_ROOT/<thread-id>/` as the engine's working directory |
 | `CLAUDE_BIN` | `claude` | Claude Code executable |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | Passed to the CLI to select the account. If unset, the CLI uses its own login. Create one with `claude setup-token` |
+| `FORGEHALL_BILLING` | `any` | `any`: use whatever authentication Claude Code is given. `subscription-only`: strip API-key variables and stop any run that is not on a subscription login or that uses paid overage. See [Billing](../concepts/workspaces.md#billing) |
 
 The runner's whole environment is inherited by the `claude` process.
 

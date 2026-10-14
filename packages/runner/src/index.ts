@@ -1,11 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { RunClaim, type RunEvent } from "@forgehall/shared";
-import { ClaudeCodeEngine } from "./claude-code.js";
+import { billingModeFrom, ClaudeCodeEngine } from "./claude-code.js";
 import type { Engine } from "./engine.js";
 
 export type { Engine, EngineResult, EngineRun } from "./engine.js";
-export { ClaudeCodeEngine } from "./claude-code.js";
+export { ClaudeCodeEngine, billingModeFrom, type BillingMode } from "./claude-code.js";
 
 export interface RunnerConfig {
   busUrl: string;
@@ -102,12 +102,17 @@ async function main() {
   if (!token) throw new Error("set AGENT_TOKEN (generated with `fh agent token <ws> <id>`)");
   const env: NodeJS.ProcessEnv = {};
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  const runner = new Runner({
-    busUrl: process.env.BUS_URL ?? "http://127.0.0.1:4545",
-    agentToken: token,
-    workRoot: process.env.WORK_ROOT ?? join(process.cwd(), ".work"),
-    engineEnv: env,
-  });
+  const billing = billingModeFrom(process.env.FORGEHALL_BILLING);
+  const runner = new Runner(
+    {
+      busUrl: process.env.BUS_URL ?? "http://127.0.0.1:4545",
+      agentToken: token,
+      workRoot: process.env.WORK_ROOT ?? join(process.cwd(), ".work"),
+      engineEnv: env,
+    },
+    new ClaudeCodeEngine(undefined, billing),
+  );
+  console.log(`[runner] billing mode: ${billing}`);
   process.on("SIGINT", () => runner.stop());
   process.on("SIGTERM", () => runner.stop());
   await runner.loop();

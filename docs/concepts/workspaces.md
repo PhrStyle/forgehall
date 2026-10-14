@@ -70,13 +70,18 @@ Reviewers are chosen at approval time (rather than fixed in config) because who 
 
 Today the bus only records an `approval` message and moves the thread to `awaiting_approval`. There is no approval record, no decision command beyond `fh reply`, and no provider.
 
-## Subscription only
+## Billing
 
-**[now]** Forgehall runs on Claude subscription plan limits and never on per-token billing:
+**[now]** Forgehall uses whatever authentication you give Claude Code. If you only log in with a subscription (Pro, Max, Team) and set no API key, runs consume your plan limits and nothing else.
 
-- The runner removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and the Bedrock, Vertex and Foundry switches from the engine's environment.
-- If the engine still starts with a non-subscription credential (`apiKeySource` other than `none`) or reports paid overage (`isUsingOverage`), the runner stops the run at once. The thread is blocked with a `subscription-only` explanation.
-- Dollar figures in the console and run records (`cost_usd`) are Claude Code's estimate of what the same tokens would cost on the API. Nothing is charged.
+Watch out for one thing: an `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`, or the Bedrock, Vertex and Foundry switches) in the runner's environment takes precedence over the subscription login, and those runs are billed per token.
+
+To make that impossible on your machine, run the runner with `FORGEHALL_BILLING=subscription-only`:
+
+- The runner removes those variables from the engine's environment.
+- If the engine still starts with a non-subscription credential (`apiKeySource` other than `none`) or reports paid overage (`isUsingOverage`), the run stops at once and the thread is blocked with a `subscription-only` explanation.
+
+Dollar figures in the console and run records (`cost_usd`) are Claude Code's estimate at API prices. With a subscription login they are not charged.
 
 ## Claude accounts per workspace
 
@@ -92,6 +97,6 @@ Planned switching modes:
 | `manual` | Several accounts; you choose the active one. Fine when all are yours. |
 | `failover` | At the limit, the next run uses the next account. **Off by default.** |
 
-Failover is off by default because it sits in a grey zone of the subscription terms: it is not explicitly forbidden, but it is the pattern closest to working around usage limits. It is available with a warning for people who accept that responsibility. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions.
+Failover is off by default because it sits in a grey zone of the subscription terms: it is not explicitly forbidden, but it is the pattern closest to working around usage limits. It is available with a warning for people who accept that responsibility. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions. Pay-per-use accounts (API key, Bedrock, Vertex, Foundry) with a daily budget are also planned, for people who want them.
 
 See the [configuration reference](../reference/configuration.md) for the planned file formats.

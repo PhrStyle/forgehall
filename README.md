@@ -77,7 +77,7 @@ Agents execute model-driven actions and edit files. Treat them like any automati
 
 - Node 22 and pnpm
 - Docker (for the local Postgres)
-- Claude Code CLI installed and logged in, with a subscription (Pro, Max or Team). Use only your own account.
+- Claude Code CLI installed and logged in, with a subscription (Pro, Max or Team). Use only your own account. No API key is needed: with only a subscription login, runs consume your plan limits. See [Billing](docs/concepts/workspaces.md#billing).
 
 ## License
 

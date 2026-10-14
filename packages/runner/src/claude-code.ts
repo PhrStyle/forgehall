@@ -6,9 +6,21 @@ import type { Engine, EngineResult, EngineRun } from "./engine.js";
 const MODEL_IDS: Record<string, string> = { haiku: "haiku", sonnet: "sonnet", opus: "opus" };
 
 /**
- * Variables that make Claude Code bill per token instead of using the subscription.
- * Forgehall runs on plan limits only, so they never reach the engine.
+ * How a runner may be billed.
+ * - `any` (default): use whatever authentication the operator configured, as Claude Code would.
+ *   With only a subscription login, runs consume plan limits only.
+ * - `subscription-only`: an opt-in local guard. Pay-per-use variables never reach the engine and
+ *   a run stops if the engine reports a non-subscription credential or paid overage.
  */
+export type BillingMode = "any" | "subscription-only";
+
+export function billingModeFrom(value: string | undefined): BillingMode {
+  if (value === undefined || value === "" || value === "any") return "any";
+  if (value === "subscription-only") return "subscription-only";
+  throw new Error(`FORGEHALL_BILLING must be "any" or "subscription-only", got "${value}"`);
+}
+
+/** Variables that make Claude Code bill per token instead of using a subscription login. */
 export const PAY_PER_USE_ENV = [
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -29,7 +41,10 @@ export function subscriptionOnlyEnv(...sources: NodeJS.ProcessEnv[]): NodeJS.Pro
 export class ClaudeCodeEngine implements Engine {
   readonly name = "claude-code";
 
-  constructor(private readonly bin = process.env.CLAUDE_BIN ?? "claude") {}
+  constructor(
+    private readonly bin = process.env.CLAUDE_BIN ?? "claude",
+    private readonly billing: BillingMode = "any",
+  ) {}
 
   args(r: EngineRun): string[] {
     const { claim } = r;
@@ -54,11 +69,10 @@ export class ClaudeCodeEngine implements Engine {
     return new Promise((resolve) => {
       const result: EngineResult = { ok: false, sessionId: r.claim.sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, error: null, rateLimit: null };
       // stdin closed: headless mode otherwise waits for piped input.
-      const child = spawn(this.bin, this.args(r), { cwd: r.cwd, env: subscriptionOnlyEnv(process.env, r.env), stdio: ["ignore", "pipe", "pipe"], signal: r.signal });
-      // Last line of defence against money charges: stop the moment the engine reports
-      // a non-subscription credential or paid overage.
+      const child = spawn(this.bin, this.args(r), { cwd: r.cwd, env: this.billing === "subscription-only" ? subscriptionOnlyEnv(process.env, r.env) : { ...process.env, ...r.env }, stdio: ["ignore", "pipe", "pipe"], signal: r.signal });
+      // subscription-only: stop the moment the engine reports a non-subscription credential or paid overage.
       const refuse = (why: string) => {
-        if (result.error?.startsWith("subscription-only")) return;
+        if (this.billing !== "subscription-only" || result.error?.startsWith("subscription-only")) return;
         result.ok = false;
         result.error = `subscription-only: ${why}`;
         child.kill("SIGTERM");

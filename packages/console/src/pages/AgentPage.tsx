@@ -82,7 +82,7 @@ function RunsTable({ agentId }: { agentId: string }) {
       <ErrorBox error={q.error} />
       {q.isSuccess && rows.length === 0 ? <p className="empty">No runs yet.</p> : (
         <div className="tbl-wrap"><table className="tbl">
-          <thead><tr><th>Run</th><th>Thread</th><th>Model</th><th>State</th><th>Queued</th><th>Duration</th><th>Tokens in/out</th><th title={MONEY_HINT}>API-equivalent</th><th>Why this model</th></tr></thead>
+          <thead><tr><th>Run</th><th>Thread</th><th>Model</th><th>State</th><th>Queued</th><th>Duration</th><th>Tokens in/out</th><th title={MONEY_HINT}>Est. cost</th><th>Why this model</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id}>
               <td className="mono">#{r.id}</td>

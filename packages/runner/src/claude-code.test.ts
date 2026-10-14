@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { RunClaim } from "@forgehall/shared";
-import { ClaudeCodeEngine, PAY_PER_USE_ENV, subscriptionOnlyEnv } from "./claude-code.js";
+import { billingModeFrom, ClaudeCodeEngine, PAY_PER_USE_ENV, subscriptionOnlyEnv, type BillingMode } from "./claude-code.js";
 
 const claim: RunClaim = {
   runId: 1, workspaceId: "dev", agentId: "vigil", threadId: "THR-0001", model: "haiku", effort: "low",
@@ -20,12 +20,25 @@ async function fakeClaude(lines: object[]): Promise<string> {
   return bin;
 }
 
-const run = (bin: string, env: NodeJS.ProcessEnv = {}) =>
-  new ClaudeCodeEngine(bin).run({ claim, cwd: tmpdir(), bus: { url: "http://127.0.0.1:1", token: "t" }, env, onEvent: () => {} });
+const run = (bin: string, billing: BillingMode = "subscription-only") =>
+  new ClaudeCodeEngine(bin, billing).run({ claim, cwd: tmpdir(), bus: { url: "http://127.0.0.1:1", token: "t" }, env: {}, onEvent: () => {} });
 
 const init = (apiKeySource: string) => ({ type: "system", subtype: "init", session_id: "s1", apiKeySource });
 const rateLimit = (isUsingOverage: boolean) => ({ type: "rate_limit_event", rate_limit_info: { status: "allowed", isUsingOverage } });
 const success = { type: "result", subtype: "success", session_id: "s1", result: "ok", total_cost_usd: 0.001, usage: { input_tokens: 1, output_tokens: 1 } };
+
+describe("billing mode", () => {
+  it("defaults to any and accepts only the two known values", () => {
+    expect(billingModeFrom(undefined)).toBe("any");
+    expect(billingModeFrom("subscription-only")).toBe("subscription-only");
+    expect(() => billingModeFrom("cheap")).toThrow();
+  });
+
+  it("leaves the operator's authentication alone in the default mode", async () => {
+    const r = await run(await fakeClaude([init("ANTHROPIC_API_KEY"), rateLimit(true), success]), "any");
+    expect(r.ok).toBe(true);
+  });
+});
 
 describe("subscription-only guard", () => {
   it("strips every pay-per-use variable from the engine environment", () => {
