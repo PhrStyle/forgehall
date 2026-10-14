@@ -54,6 +54,11 @@ export const RunClaim = z.object({
   agentPrompt: z.string(),
   /** Engine tools allowed without asking, besides the bus tools. */
   allowedTools: z.array(z.string()),
+  /** Repository checkout for the run, or null for threads without a repo. */
+  repo: z
+    .object({ id: z.string(), base: z.string(), branch: z.string() })
+    .nullable()
+    .default(null),
 });
 export type RunClaim = z.infer<typeof RunClaim>;
 

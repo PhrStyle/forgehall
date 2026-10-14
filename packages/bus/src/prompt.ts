@@ -21,6 +21,11 @@ export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: M
     lines.push("</message>");
     lines.push("");
   }
+  if (thread.repo_id && thread.branch) {
+    lines.push(`Repository: ${thread.repo_id}. Your working directory is a checkout of branch ${thread.branch}.`);
+    lines.push("Edit files directly. Do not run git: when your turn ends successfully, your changes are committed and pushed to the thread branch for you.");
+    lines.push("");
+  }
   lines.push("How to act:");
   lines.push(`- Reply and ask for things only through the mcp__bus__* tools (thread_id: ${thread.id}). Loose text at the end of the turn reaches no one.`);
   lines.push("- To reply to a message, use answer with its id. To ask something, use ask and end the turn: the reply arrives in a new turn.");

@@ -5,13 +5,15 @@ import { HUMAN, Model } from "@forgehall/shared";
 import { connect, migrate } from "./db.js";
 import { Store } from "./store.js";
 
-const USAGE = `fh — Forgehall operations (phase 1, no console yet)
+const USAGE = `fh — Forgehall operations
 
   fh migrate
   fh workspace add <id> <name>
   fh agent add <ws> <id> --name <name> --role <role> [--model sonnet] [--prompt-file agent.md] [--accepts a,b]
   fh agent token <ws> <id>                 generates a new token (invalidates the previous one)
-  fh send <ws> <agent> <text> [--title <title>] [--severity high]
+  fh repo add <ws> <id> <upstream> [--base main]   upstream: local path or git URL
+  fh repos <ws>
+  fh send <ws> <agent> <text> [--title <title>] [--severity high] [--repo <id>]
   fh reply <thread> <text> [--to <agent>] [--type answer|decision|request] [--re <message_id>]
   fh threads <ws> [--state <state>]
   fh thread <id>
@@ -33,6 +35,8 @@ async function main() {
       type: { type: "string" },
       re: { type: "string" },
       state: { type: "string" },
+      repo: { type: "string" },
+      base: { type: "string" },
     },
   });
   const [cmd, sub, ...rest] = positionals;
@@ -73,12 +77,24 @@ async function main() {
         } else throw new Error(USAGE);
         break;
       }
+      case "repo": {
+        const [ws, id, upstream] = rest;
+        if (sub !== "add" || !ws || !id || !upstream) throw new Error(USAGE);
+        const r = await store.upsertRepo({ workspaceId: ws, id, upstreamUrl: upstream, ...(values.base ? { base: values.base } : {}) });
+        console.log(`repo ${ws}/${r.id} ok · upstream ${r.upstream_url} · base ${r.base_branch} · staging ready`);
+        break;
+      }
+      case "repos": {
+        if (!sub) throw new Error(USAGE);
+        for (const r of await store.repos(sub)) console.log(`${r.id}  ${r.provider}  ${r.base_branch}  ${r.upstream_url}`);
+        break;
+      }
       case "send": {
         const [agent, ...text] = rest;
         const ws = sub;
         if (!ws || !agent || text.length === 0) throw new Error(USAGE);
         const body = text.join(" ");
-        const t = await store.createThread({ workspaceId: ws, title: values.title ?? body.slice(0, 60), createdBy: HUMAN, assignee: agent, severity: values.severity ?? null });
+        const t = await store.createThread({ workspaceId: ws, title: values.title ?? body.slice(0, 60), createdBy: HUMAN, assignee: agent, severity: values.severity ?? null, repoId: values.repo ?? null });
         await store.postMessage({ workspaceId: ws, threadId: t.id, type: "request", from: HUMAN, to: agent, body });
         console.log(`${t.id} opened for ${agent}`);
         break;

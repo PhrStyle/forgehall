@@ -1,5 +1,6 @@
 import { connect, migrate } from "./db.js";
 import { registerApi } from "./api.js";
+import { registerGitHttp } from "./git-http.js";
 import { buildHttp } from "./http.js";
 import { Store } from "./store.js";
 
@@ -19,6 +20,7 @@ async function main() {
     claimWaitMs: Number(process.env.CLAIM_WAIT_MS ?? 25_000),
   });
   await registerApi(app, store);
+  await registerGitHttp(app, store);
   // Runs whose runner went silent are failed and their messages re-queued.
   const staleAfter = Number(process.env.RUN_STALE_SECONDS ?? 300);
   const reaper = setInterval(() => {

@@ -4,6 +4,7 @@ import type postgres from "postgres";
 import type { Sql } from "./db.js";
 
 type Tx = Sql | postgres.TransactionSql;
+import { branchDiff, ensureStaging, MergeConflictError, mergeAndPublish, revParse, stagingPath, threadBranch } from "./git.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
 
@@ -24,6 +25,8 @@ export interface ThreadRow {
   state: ThreadState;
   severity: string | null;
   flags: { escalate?: Record<string, string> };
+  repo_id: string | null;
+  branch: string | null;
   created_by: string;
   assignee: string | null;
   updated_at: Date;
@@ -39,6 +42,29 @@ export interface MessageRow {
   outcome: Outcome | null;
   reply_to: string | null;
   created_at: Date;
+}
+
+export interface RepoRow {
+  workspace_id: string;
+  id: string;
+  upstream_url: string;
+  provider: string;
+  base_branch: string;
+}
+
+export interface ApprovalRow {
+  id: string;
+  workspace_id: string;
+  thread_id: string;
+  policy: string;
+  requested_by: string;
+  summary: string;
+  head_sha: string | null;
+  state: "pending" | "approved" | "rejected" | "superseded";
+  comment: string | null;
+  result: { merged?: string } | null;
+  created_at: Date;
+  decided_at: Date | null;
 }
 
 export class BusError extends Error {}
@@ -114,9 +140,14 @@ export class Store {
 
   // ---------- threads & messages ----------
 
-  async createThread(t: { workspaceId: string; title: string; createdBy: string; assignee: string; severity?: string | null }): Promise<ThreadRow> {
-    const [row] = await this.sql<ThreadRow[]>`INSERT INTO threads (workspace_id, title, created_by, assignee, severity)
-      VALUES (${t.workspaceId}, ${t.title}, ${t.createdBy}, ${t.assignee}, ${t.severity ?? null}) RETURNING *`;
+  async createThread(t: { workspaceId: string; title: string; createdBy: string; assignee: string; severity?: string | null; repoId?: string | null }): Promise<ThreadRow> {
+    if (t.repoId && !(await this.repo(t.workspaceId, t.repoId))) throw new BusError(`repo ${t.repoId} does not exist in this workspace`);
+    const [row] = await this.sql<ThreadRow[]>`INSERT INTO threads (workspace_id, title, created_by, assignee, severity, repo_id)
+      VALUES (${t.workspaceId}, ${t.title}, ${t.createdBy}, ${t.assignee}, ${t.severity ?? null}, ${t.repoId ?? null}) RETURNING *`;
+    if (t.repoId) {
+      row!.branch = threadBranch(row!.id);
+      await this.sql`UPDATE threads SET branch = ${row!.branch} WHERE id = ${row!.id}`;
+    }
     await notify(this.sql, { kind: "thread", workspace: row!.workspace_id, thread: row!.id });
     return row!;
   }
@@ -237,6 +268,8 @@ export class Store {
         SELECT id, thread_id, model, effort, route_reason FROM runs
         WHERE workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} AND state = 'queued'
           AND (not_before IS NULL OR not_before <= now())
+          -- one run per thread at a time: agents share the thread's branch
+          AND NOT EXISTS (SELECT 1 FROM runs o WHERE o.thread_id = runs.thread_id AND o.state = 'running')
         ORDER BY priority, queued_at LIMIT 1 FOR UPDATE SKIP LOCKED`;
       if (!run) return null;
       await tx`UPDATE runs SET state = 'running', started_at = now(), heartbeat_at = now() WHERE id = ${run.id}`;
@@ -261,6 +294,9 @@ export class Store {
         prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session) }),
         agentPrompt: agent.config.prompt ?? "",
         allowedTools: agent.config.allowedTools ?? DEFAULT_TOOLS,
+        repo: thread!.repo_id && thread!.branch
+          ? { id: thread!.repo_id, base: (await tx<{ base_branch: string }[]>`SELECT base_branch FROM repos WHERE workspace_id = ${agent.workspace_id} AND id = ${thread!.repo_id}`)[0]!.base_branch, branch: thread!.branch }
+          : null,
       };
     });
   }
@@ -302,6 +338,7 @@ export class Store {
             seven_day = EXCLUDED.seven_day, seven_day_resets_at = EXCLUDED.seven_day_resets_at, status = EXCLUDED.status, updated_at = now()`;
       }
       await this.afterRun(tx, { workspaceId: agent.workspace_id, agentId: agent.id, threadId: run.thread_id, runId, ok: f.ok, error: f.error });
+      await this.pinApprovals(tx, run.thread_id, agent.id);
     });
   }
 
@@ -341,6 +378,26 @@ export class Store {
     await notify(tx, { kind: "run", workspace: r.workspaceId, thread: r.threadId, run: r.runId, state: r.ok ? "done" : "failed" });
   }
 
+  /** Pins approvals requested during a run to what the run pushed, or withdraws them if nothing was. */
+  private async pinApprovals(tx: Tx, threadId: string, agentId: string): Promise<void> {
+    const waiting = await tx<ApprovalRow[]>`SELECT * FROM approvals WHERE thread_id = ${threadId} AND requested_by = ${agentId} AND state = 'pending' AND head_sha IS NULL`;
+    if (waiting.length === 0) return;
+    const [t] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${threadId}`;
+    const { repo, staging, branch } = await this.threadRepo(t!);
+    const diff = await branchDiff(staging, repo.base_branch, branch);
+    for (const a of waiting) {
+      if (diff.headSha && diff.commits.length > 0) {
+        await tx`UPDATE approvals SET head_sha = ${diff.headSha} WHERE id = ${a.id}`;
+      } else {
+        await tx`UPDATE approvals SET state = 'superseded', comment = 'no changes were pushed' WHERE id = ${a.id}`;
+        await tx`UPDATE threads SET state = 'in_progress', updated_at = now() WHERE id = ${threadId} AND state = 'awaiting_approval'`;
+        const [msg] = await tx<{ id: string }[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body)
+          VALUES (${t!.workspace_id}, ${threadId}, 'notify', ${SYSTEM}, ${HUMAN}, ${`Approval withdrawn: ${agentId} asked for approval but pushed no changes to ${branch}.`}) RETURNING id`;
+        await notify(tx, { kind: "message", workspace: t!.workspace_id, thread: threadId, message: msg!.id });
+      }
+    }
+  }
+
   async heartbeat(agent: AgentRow, runId: number): Promise<void> {
     const rows = await this.sql`UPDATE runs SET heartbeat_at = now()
       WHERE id = ${runId} AND workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} AND state = 'running' RETURNING id`;
@@ -362,6 +419,107 @@ export class Store {
       }
       return stale.map((r) => Number(r.id));
     });
+  }
+
+  // ---------- repositories & approvals ----------
+
+  async upsertRepo(r: { workspaceId: string; id: string; upstreamUrl: string; base?: string; provider?: string }): Promise<RepoRow> {
+    const base = r.base ?? "main";
+    await ensureStaging(r.workspaceId, r.id, r.upstreamUrl, base);
+    const [row] = await this.sql<RepoRow[]>`INSERT INTO repos (workspace_id, id, upstream_url, provider, base_branch)
+      VALUES (${r.workspaceId}, ${r.id}, ${r.upstreamUrl}, ${r.provider ?? "local"}, ${base})
+      ON CONFLICT (workspace_id, id) DO UPDATE SET upstream_url = EXCLUDED.upstream_url, provider = EXCLUDED.provider, base_branch = EXCLUDED.base_branch
+      RETURNING *`;
+    return row!;
+  }
+
+  async repo(workspaceId: string, repoId: string): Promise<RepoRow | null> {
+    const [row] = await this.sql<RepoRow[]>`SELECT * FROM repos WHERE workspace_id = ${workspaceId} AND id = ${repoId}`;
+    return row ?? null;
+  }
+
+  async repos(workspaceId: string): Promise<RepoRow[]> {
+    return this.sql<RepoRow[]>`SELECT * FROM repos WHERE workspace_id = ${workspaceId} ORDER BY id`;
+  }
+
+  /** The thread's repo and branch, or an error when the thread has no repository. */
+  private async threadRepo(t: ThreadRow): Promise<{ repo: RepoRow; staging: string; branch: string }> {
+    if (!t.repo_id || !t.branch) throw new BusError(`thread ${t.id} has no repository`);
+    const repo = await this.repo(t.workspace_id, t.repo_id);
+    if (!repo) throw new BusError(`repo ${t.repo_id} not found`);
+    return { repo, staging: stagingPath(t.workspace_id, repo.id), branch: t.branch };
+  }
+
+  async threadDiff(threadId: string) {
+    const t = await this.thread(threadId);
+    if (!t) throw new BusError(`thread ${threadId} not found`);
+    const { repo, staging, branch } = await this.threadRepo(t);
+    return branchDiff(staging, repo.base_branch, branch);
+  }
+
+  /**
+   * An agent asks the user to approve a thread. With a repository, the request pins the branch
+   * commit being approved, so later pushes cannot slip into an approval unseen.
+   */
+  async requestApproval(agent: AgentRow, threadId: string, summary: string): Promise<{ message: MessageRow; approval: ApprovalRow | null }> {
+    const t = await this.thread(threadId);
+    if (!t || t.workspace_id !== agent.workspace_id) throw new BusError(`thread ${threadId} does not exist in this workspace`);
+    let approval: ApprovalRow | null = null;
+    if (t.repo_id) {
+      const { repo, staging, branch } = await this.threadRepo(t);
+      // During its own run the agent's edits are not pushed yet: pin the commit when the run ends.
+      const [running] = await this.sql`SELECT 1 FROM runs WHERE thread_id = ${threadId} AND agent_id = ${agent.id} AND state = 'running'`;
+      const diff = await branchDiff(staging, repo.base_branch, branch);
+      const head = running ? null : await revParse(staging, branch);
+      if (!running && (!head || diff.commits.length === 0)) throw new BusError(`nothing to approve: ${branch} has no commits ahead of ${repo.base_branch}`);
+      const [ws] = await this.sql<{ approval_policy: string }[]>`SELECT approval_policy FROM workspaces WHERE id = ${t.workspace_id}`;
+      await this.sql`UPDATE approvals SET state = 'superseded' WHERE thread_id = ${threadId} AND state = 'pending'`;
+      [approval] = await this.sql<ApprovalRow[]>`INSERT INTO approvals (workspace_id, thread_id, policy, requested_by, summary, head_sha)
+        VALUES (${t.workspace_id}, ${threadId}, ${ws!.approval_policy}, ${agent.id}, ${summary}, ${head}) RETURNING *` as unknown as [ApprovalRow];
+    }
+    const message = await this.postMessage({ workspaceId: t.workspace_id, threadId, type: "approval", from: agent.id, to: HUMAN, body: summary });
+    return { message, approval };
+  }
+
+  async approvals(threadId: string): Promise<ApprovalRow[]> {
+    return this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE thread_id = ${threadId} ORDER BY id DESC`;
+  }
+
+  /**
+   * The user decides on a pending approval. Approve (policy merge): merge the pinned commit into
+   * the base branch, publish it upstream and close the thread. Reject: the comment goes back to
+   * the assignee, who gets a new run.
+   */
+  async decideApproval(approvalId: number, decision: "approve" | "reject", comment: string | null): Promise<ApprovalRow> {
+    const [a] = await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`;
+    if (!a) throw new BusError(`approval ${approvalId} not found`);
+    if (a.state !== "pending") throw new BusError(`approval ${approvalId} is already ${a.state}`);
+    const t = (await this.thread(a.thread_id))!;
+    const assignee = t.assignee && t.assignee !== HUMAN ? t.assignee : a.requested_by;
+
+    if (decision === "reject") {
+      if (!comment?.trim()) throw new BusError("say what should change");
+      await this.sql`UPDATE approvals SET state = 'rejected', comment = ${comment}, decided_at = now() WHERE id = ${approvalId}`;
+      await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "decision", from: HUMAN, to: assignee, body: `Changes requested: ${comment.trim()}` });
+      return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
+    }
+
+    if (!a.head_sha) throw new BusError("the agent is still pushing its changes; try again in a moment");
+    if (a.policy !== "merge") throw new BusError(`policy ${a.policy} is not available yet; only merge is implemented`);
+    const { repo, staging, branch } = await this.threadRepo(t);
+    let merged: string;
+    try {
+      merged = await mergeAndPublish(staging, repo.base_branch, branch, a.head_sha, `Merge ${branch}: ${t.title}`, { name: "Forgehall", email: "forgehall@localhost" });
+    } catch (e) {
+      if (e instanceof MergeConflictError) throw new BusError(e.message);
+      throw e;
+    }
+    await this.sql`UPDATE approvals SET state = 'approved', comment = ${comment}, decided_at = now(), result = ${this.sql.json({ merged })} WHERE id = ${approvalId}`;
+    await this.postMessage({
+      workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: HUMAN, to: assignee,
+      body: `Approved and merged into ${repo.base_branch} as ${merged.slice(0, 7)}.${comment?.trim() ? ` ${comment.trim()}` : ""}`,
+    });
+    return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
   }
 
   // ---------- read models for the console ----------

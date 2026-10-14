@@ -46,8 +46,21 @@ export async function registerApi(app: FastifyInstance, store: Store): Promise<v
   );
 
   // Human actions. The sender is always the user; agents act only through MCP.
+  app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/repos", async (req) => store.repos(req.params.ws));
+
+  app.get<{ Params: { id: string } }>("/api/threads/:id/diff", async (req) => store.threadDiff(req.params.id));
+
+  app.get<{ Params: { id: string } }>("/api/threads/:id/approvals", async (req) => store.approvals(req.params.id));
+
+  const Decide = z.object({ decision: z.enum(["approve", "reject"]), comment: z.string().optional() });
+  app.post<{ Params: { id: string } }>("/api/approvals/:id/decide", async (req) => {
+    const d = Decide.parse(req.body);
+    return store.decideApproval(Number(req.params.id), d.decision, d.comment ?? null);
+  });
+
   const NewThread = z.object({
     workspace: z.string(),
+    repo: z.string().optional(),
     to: z.string(),
     title: z.string().min(3),
     body: z.string().min(1),
@@ -55,7 +68,7 @@ export async function registerApi(app: FastifyInstance, store: Store): Promise<v
   });
   app.post("/api/threads", async (req, reply) => {
     const t = NewThread.parse(req.body);
-    const thread = await store.createThread({ workspaceId: t.workspace, title: t.title, createdBy: HUMAN, assignee: t.to, severity: t.severity ?? null });
+    const thread = await store.createThread({ workspaceId: t.workspace, title: t.title, createdBy: HUMAN, assignee: t.to, severity: t.severity ?? null, repoId: t.repo ?? null });
     await store.postMessage({ workspaceId: t.workspace, threadId: thread.id, type: "request", from: HUMAN, to: t.to, body: t.body });
     return reply.code(201).send(thread);
   });

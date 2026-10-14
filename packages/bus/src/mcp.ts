@@ -39,11 +39,12 @@ export function busMcpServer(store: Store, me: AgentRow): McpServer {
         title: z.string().min(3),
         body: z.string().min(1),
         severity: z.enum(["low", "medium", "high"]).optional(),
+        repo: z.string().optional().describe("repository the work happens in; gives the thread its own branch"),
       },
     },
-    ({ to, title, body, severity }) =>
+    ({ to, title, body, severity, repo }) =>
       guard(async () => {
-        const t = await store.createThread({ workspaceId: ws, title, createdBy: me.id, assignee: to, severity: severity ?? null });
+        const t = await store.createThread({ workspaceId: ws, title, createdBy: me.id, assignee: to, severity: severity ?? null, repoId: repo ?? null });
         const m = await store.postMessage({ workspaceId: ws, threadId: t.id, type: "request", from: me.id, to, body });
         return ok(`Thread ${t.id} opened, request sent to ${to} (message ${m.id}).`);
       }),
@@ -99,14 +100,15 @@ export function busMcpServer(store: Store, me: AgentRow): McpServer {
   server.registerTool(
     "request_approval",
     {
-      description: "Asks the user for a decision (for example, approving a branch). Summarize what was done and how it was verified.",
+      description: "Asks the user to approve the thread's work. On a thread with a repository, the user reviews the branch diff and approving publishes it. Summarize what was done and how it was verified.",
       inputSchema: { thread_id: z.string(), summary: z.string().min(1) },
     },
     ({ thread_id, summary }) =>
       guard(async () => {
         await threadInWs(thread_id);
-        const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "approval", from: me.id, to: HUMAN, body: summary });
-        return ok(`Approval requested from the user (message ${m.id}). End the turn.`);
+        const { message, approval } = await store.requestApproval(me, thread_id, summary);
+        const pinned = !approval ? "" : approval.head_sha ? ` for commit ${approval.head_sha.slice(0, 7)}` : " (your changes are pushed and pinned when this turn ends)";
+        return ok(`Approval requested from the user${pinned} (message ${message.id}). End the turn.`);
       }),
   );
 
