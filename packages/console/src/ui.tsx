@@ -52,7 +52,7 @@ export function Chip({ tone, children }: { tone?: string; children: ReactNode })
 }
 
 export function StatusChip({ s }: { s: AgentStatus }) {
-  return <Chip tone={s === "running" ? "ok" : s === "waiting" ? "warn" : s === "error" ? "err" : ""}>{STATUS_LABEL[s]}</Chip>;
+  return <Chip tone={s === "running" ? "ok" : s === "waiting" ? "warn" : s === "error" || s === "offline" ? "err" : ""}>{STATUS_LABEL[s]}</Chip>;
 }
 
 export function ErrorBox({ error }: { error: unknown }) {

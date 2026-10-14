@@ -20,6 +20,8 @@ export interface AgentOverview {
   last_error: string | null;
   last_ended_at: string | null;
   runs_today: number;
+  /** A runner for this agent asked for work in the last minute. */
+  runner_online: boolean | null;
 }
 
 export interface ThreadOverview {

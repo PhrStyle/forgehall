@@ -1,11 +1,13 @@
 import type { AgentOverview, ModelName, Run, ThreadState } from "./api";
 
-export type AgentStatus = "running" | "waiting" | "error" | "idle";
+export type AgentStatus = "running" | "offline" | "waiting" | "error" | "idle";
 
-export const STATUS_LABEL: Record<AgentStatus, string> = { running: "Running", waiting: "Queued", error: "Failed", idle: "Idle" };
+export const STATUS_LABEL: Record<AgentStatus, string> = { running: "Running", offline: "Runner offline", waiting: "Queued", error: "Failed", idle: "Idle" };
 
 export function agentStatus(a: AgentOverview): AgentStatus {
   if (a.run_id) return "running";
+  // Without a runner nothing will happen, which matters more than queued or failed.
+  if (!a.runner_online) return "offline";
   if (a.queued > 0) return "waiting";
   if (a.last_state === "failed") return "error";
   return "idle";

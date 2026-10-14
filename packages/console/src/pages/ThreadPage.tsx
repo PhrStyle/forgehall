@@ -61,6 +61,7 @@ export function ThreadPage() {
         ) : <div className="pad-b" style={{ paddingBottom: 14 }}><span className="muted">State: {STATE_LABEL[thread.state]}</span></div>}
       </div>
       <div className="main-body">
+        <OfflineRunnerBanner runs={runs} agents={agents} workspace={thread.workspace_id} />
         <div className="thread-grid">
           <div className="main-col">
           {hasRepo && <ChangesCard threadId={thread.id} />}
@@ -379,6 +380,22 @@ function RepoApprovalCard({ threadId }: { threadId: string }) {
           ))}</ul>
         </details>
       )}
+    </div>
+  );
+}
+
+/** Queued work for an agent whose runner is not connected will wait forever; say so and how to fix it. */
+function OfflineRunnerBanner({ runs, agents, workspace }: { runs: Run[]; agents: { id: string; name: string; runner_online: boolean | null }[]; workspace: string }) {
+  const waiting = [...new Set(runs.filter((r) => r.state === "queued").map((r) => r.agent_id))];
+  const offline = waiting.map((id) => agents.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a && !a.runner_online);
+  if (offline.length === 0) return null;
+  return (
+    <div className="banner warn" role="status">
+      <b>{offline.map((a) => a.name).join(" and ")} {offline.length > 1 ? "have" : "has"} work queued but no runner connected.</b>
+      <span> Nothing happens until a runner starts. In the repository folder:</span>
+      {offline.map((a) => (
+        <code key={a.id} className="term">AGENT_TOKEN=$(node packages/bus/dist/cli.js agent token {workspace} {a.id}) node packages/runner/dist/index.js</code>
+      ))}
     </div>
   );
 }
