@@ -141,7 +141,9 @@ export class Store {
     await this.sql`INSERT INTO agents (workspace_id, id, name, role, default_model, accepts_from, config)
       VALUES (${a.workspaceId}, ${a.id}, ${a.name}, ${a.role}, ${a.defaultModel}, ${a.acceptsFrom ?? []}, ${this.sql.json(config)})
       ON CONFLICT (workspace_id, id) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role,
-        default_model = EXCLUDED.default_model, accepts_from = EXCLUDED.accepts_from, config = EXCLUDED.config`;
+        default_model = EXCLUDED.default_model, accepts_from = EXCLUDED.accepts_from,
+        -- merge: keep what the user granted over time (e.g. "Always allow" permission rules)
+        config = agents.config || EXCLUDED.config`;
   }
 
   /** Issues a new token for an agent (invalidating the previous one) and returns it once. */
