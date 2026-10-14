@@ -106,13 +106,23 @@ fh agent ps
 
 ### `fh repo add <ws> <id> <upstream> [--base <branch>]`
 
-Registers a repository in a workspace (provider `local`) and creates its staging remote at `$FORGEHALL_HOME/staging/<ws>/<id>.git`. `fh` sends the request to the bus (`POST /api/workspaces/:ws/repos`, authenticated with the admin token), so the bus must be running; it is reached at `FORGEHALL_BUS_URL` (default `http://127.0.0.1:4545`). Running it again for the same id updates the upstream and base branch and refreshes the staging remote.
+Registers a repository in a workspace and creates its staging remote at `$FORGEHALL_HOME/staging/<ws>/<id>.git`. The provider is detected from the upstream URL. `fh` sends the request to the bus (`POST /api/workspaces/:ws/repos`, authenticated with the admin token), so the bus must be running; it is reached at `FORGEHALL_BUS_URL` (default `http://127.0.0.1:4545`). Running it again for the same id updates the upstream and base branch and refreshes the staging remote.
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `<id>` | required | Short name, for example `checkout-app` |
 | `<upstream>` | required | A git URL, or a local path under `~/.forgehall` (for example `~/.forgehall/upstreams/checkout-app.git`). Approved work is published here |
 | `--base <branch>` | `main` | Branch that approved work is merged into |
+
+The provider is detected from the upstream URL:
+
+| Upstream | Provider |
+|---|---|
+| `github.com` | `github` |
+| `dev.azure.com` or `*.visualstudio.com` | `azure-devops` |
+| anything else, including local paths | `local` |
+
+Credentials embedded in the URL (`user@`) are stripped before the URL is stored. For a private `github` or `azure-devops` host, add its token in the console's Settings ([Publishing](console-api.md#publishing)) before running `fh repo add`: the bus clones the base branch then.
 
 The staging remote is a bare repository seeded from the upstream's base branch, with a hook that accepts only `refs/heads/fh/*` pushes and no deletions. The workspace must exist.
 

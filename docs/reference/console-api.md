@@ -33,6 +33,8 @@ Status: **implemented**. JSON bodies and responses unless stated. Validation err
 | `GET /api/workspaces/:ws/usage` | Latest usage reading, or `{}` |
 | `GET /api/workspaces/:ws/repos` | `[{id, upstream_url, provider, base_branch, ...}]` |
 | `GET /api/workspaces/:ws/permissions?state=pending` | Permission requests in that state (`pending` by default, or `allowed`, `denied`, `expired`), oldest first |
+| `GET /api/workspaces/:ws/publishing` | The workspace's publishing settings and stored credentials (below) |
+| `GET /api/threads/:id/reviewers?q=<text>` | Possible pull request reviewers for a repository thread (below) |
 | `GET /api/settings` | Machine-wide settings, for example `{"allow_host_runners": false}` |
 | `GET /api/threads/:id` | `{thread, messages, runs}`; 404 if unknown |
 | `GET /api/threads/:id/diff` | A **BranchDiff** for a repository thread (below) |
@@ -66,7 +68,15 @@ What the thread branch changes compared with the base branch, since they diverge
  "comment": null, "result": null}
 ```
 
-`state` is `pending`, `approved`, `rejected` or `superseded`. `head_sha` is `null` while the requesting agent's run is still pushing. After approval, `result` is `{"merged": "<sha>"}`.
+`state` is `pending`, `approved`, `rejected` or `superseded`. `head_sha` is `null` while the requesting agent's run is still pushing. `result` is set on approval and depends on the policy:
+
+| Policy | `result` |
+|---|---|
+| `merge` | `{"merged": "<sha>"}`: the new commit on the base branch |
+| `branch_only` | `{"branch": "fh/THR-0001", "commit": "<sha>"}` |
+| `pull_request` | `{"branch": "fh/THR-0001", "commit": "<sha>", "pr": {"id", "url", "status": "open" \| "merged" \| "closed"}, "warnings"?}` |
+
+`warnings` lists non-fatal problems, such as a reviewer that could not be added.
 
 ## Act (as the user)
 
@@ -76,10 +86,13 @@ What the thread branch changes compared with the base branch, since they diverge
 | `POST /api/threads/:id/messages` | `{to, body, type? (default answer), replyTo?}` | Posts a message as the user. 201 |
 | `POST /api/threads/:id/close` | `{state: "done" \| "cancelled", note?}` | Closes the thread and cancels its queued runs. 204 |
 | `POST /api/threads/:id/reopen` | `{note}` | Reopens a done, cancelled or blocked thread; the assignee gets a `request` with the note. 204 |
-| `POST /api/approvals/:id/decide` | `{decision: "approve" \| "reject", comment?}` | See below |
+| `POST /api/approvals/:id/decide` | `{decision: "approve" \| "reject", comment?, reviewers?, title?}` | See below |
 | `POST /api/workspaces/:ws/repos` | `{id, upstream, base?}` | Registers or updates a repository and creates its staging remote. 201 with the repository. `upstream` is a git URL or a path **as the bus sees it** (`/data/upstreams/...`); `fh repo add` translates host paths for you |
 | `POST /api/permissions/:id/decide` | `{decision: "allow" \| "deny", remember?, reason?}` | See [Permission requests](#permission-requests) |
 | `PATCH /api/settings` | `{allow_host_runners?: boolean}` | See [Settings](#settings) |
+| `PATCH /api/workspaces/:ws/publishing` | Any subset of `{approval_policy?, git_author_name?, git_author_email?, ai_trailer?}` | See [Publishing](#publishing) |
+| `PUT /api/workspaces/:ws/credentials/:provider` | `{token}` | Stores a host token. 200 with `{provider, token_hint, created_at}`. See [Publishing](#publishing) |
+| `DELETE /api/workspaces/:ws/credentials/:provider` | none | Removes the stored token. 204 |
 
 ### Deciding an approval
 
@@ -89,11 +102,70 @@ curl -s -X POST http://127.0.0.1:4545/api/approvals/3/decide \
   -H 'content-type: application/json' -d '{"decision":"approve"}'
 ```
 
-- `approve` (policy `merge`): merges the pinned commit into the base branch without a working tree, pushes the result to the upstream, marks the approval `approved` and closes the thread with `Approved and merged into main as <sha>`. Fails if the approval is not `pending`, if the agent is still pushing (`head_sha` is `null`), if the branch moved after the request, or if the merge conflicts with the base. Nothing is published on failure.
+- `approve`: the bus squashes the approved commit onto the **current** base branch, without a working tree, into **one** commit. It is authored and committed by the workspace identity ([Publishing](#publishing)), with the message: the title, a blank line, the approval summary, and the `Co-Authored-By` trailer if `ai_trailer` is on. The approval becomes `approved` and the result depends on the policy (see the table above). Fails if the approval is not `pending`, if the agent is still pushing (`head_sha` is `null`), if the branch moved after the request, or if the squash conflicts with the base. Nothing is published on failure.
+  - `merge`: the commit is pushed as the base branch upstream. The thread closes with `Approved and merged into main as <sha>`.
+  - `branch_only`: the commit is force-pushed as the thread branch (`fh/<THREAD-ID>`) upstream. The thread closes.
+  - `pull_request`: the branch is pushed and a pull request is opened against the base branch with the chosen `reviewers` and `title` (default: the thread title). The thread moves to `external_review`. Every `PR_POLL_SECONDS` the bus checks the pull request: if it is merged, the thread closes; if it is closed without merging, the thread becomes `blocked` and you are told. Reviewer comments are **not** yet sent back to the agent (planned).
 - `reject`: `comment` is required. The approval becomes `rejected` and the assignee receives `Changes requested: <comment>` as a `decision`, which starts a new run.
-- Policies other than `merge` fail with a message saying they are not implemented.
+
+`reviewers` is an array of reviewer ids taken from [`GET /api/threads/:id/reviewers`](#reviewers) (at most 20). It is used only by `pull_request`. `title` is at most 200 characters.
 
 Refusals come back as 409 with the reason in `error`; the console shows it.
+
+```bash
+curl -s -X POST http://127.0.0.1:4545/api/approvals/4/decide \
+  -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)" \
+  -H 'content-type: application/json' \
+  -d '{"decision":"approve","reviewers":["dana-reyes"],"title":"Fix coupon rounding"}'
+```
+
+### Reviewers
+
+`GET /api/threads/:id/reviewers?q=<text>` searches people on the thread repository's host, for the `reviewers` field of an approval:
+
+```json
+[{"id": "dana-reyes", "displayName": "Dana Reyes", "uniqueName": "dana@example.com"}]
+```
+
+- GitHub: the repository's collaborators, filtered by login or name.
+- Azure DevOps: identity search.
+- `400` for a local repository, or when the workspace has no credential for that host.
+
+## Publishing
+
+Per-workspace settings for how approved work is published (console Settings, "Publishing"), and the host credentials the bus uses to push and open pull requests. Agents never receive these credentials.
+
+```json
+{"approval_policy": "pull_request", "git_author_name": "Dana Reyes", "git_author_email": "dana@example.com",
+ "ai_trailer": true,
+ "credentials": [{"provider": "github", "token_hint": "…k3Qz", "created_at": "2026-10-14T13:45:10.000Z"}]}
+```
+
+`GET /api/workspaces/:ws/publishing` returns this shape. Tokens are never returned: `token_hint` is the last 4 characters.
+
+`PATCH /api/workspaces/:ws/publishing` accepts any subset of the fields and returns the same shape as GET:
+
+| Field | Values | Default |
+|---|---|---|
+| `approval_policy` | `merge`, `pull_request` or `branch_only` (see [Deciding an approval](#deciding-an-approval)) | `merge` |
+| `git_author_name` | text; `null` or empty clears it | `Forgehall` |
+| `git_author_email` | e-mail address; `null` or empty clears it | `forgehall@localhost` |
+| `ai_trailer` | boolean. On: adds `Co-Authored-By: Claude <noreply@anthropic.com>` to published commits | `true` |
+
+`400` for an invalid policy, a name containing `<`, `>` or a newline, or an invalid e-mail address.
+
+`PUT /api/workspaces/:ws/credentials/:provider` stores a token for a host. `:provider` is `github` or `azure-devops`; the body is `{"token": "..."}`. Whitespace is removed from the token, and a token under 20 characters is refused. The token is written to `~/.forgehall/secrets/providers/<ws>/<provider>.token` (mode `0600`), never to the database. The response is `{provider, token_hint, created_at}`.
+
+`DELETE /api/workspaces/:ws/credentials/:provider` removes the stored token and returns 204.
+
+The token needs these scopes:
+
+| Host | Token | Scopes |
+|---|---|---|
+| GitHub | fine-grained token | Contents: read and write; Pull requests: read and write |
+| Azure DevOps | personal access token | Code: Read & Write; Identity: Read |
+
+The bus clones the base branch of a private repository with this token when the repository is added, so add the credential before the repository (see [`fh repo add`](cli.md#fh-repo-add-ws-id-upstream---base-branch)).
 
 ## Permission requests
 

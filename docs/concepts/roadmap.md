@@ -49,10 +49,12 @@ Done:
 - Admin token on the whole console API (`/api`); `fh setup` prepares `~/.forgehall` and the stack settings
 - Tool permissions: default rules for isolated runners, and permission requests answered in the console (allow once, always allow, deny), expiring after 15 minutes. Validated with a real run: a denied `rm` was respected
 - Verified end to end: an agent fixed a bug in a sample repository and the approved merge reached the upstream; a push to `main` with an agent token is rejected
+- Publishing: policies `merge`, `pull_request` and `branch_only`; one squashed commit per approval with the workspace commit identity and an optional AI trailer; GitHub and Azure DevOps clients (pull requests, reviewer search, status polling) with the bus's write credential per workspace; console Settings → Publishing and a reviewer picker on the approval card
+- Verified end to end in isolated containers with a subscription account: an agent added tests, asked for package installs (approved in the console), another agent verified them, and the approved change reached the upstream
 
 Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
-- `pull_request` and `branch_only` policies with real providers (GitHub, Azure DevOps), which belong to F3
+- A full `pull_request` run against a real GitHub or Azure DevOps project; reviewer comments back to the agent; pull requests opened when verification starts (F3)
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools

@@ -1,6 +1,6 @@
 # 0005. Provider adapters and approval policies
 
-- Status: Accepted (design; not implemented in phase 1)
+- Status: Accepted (implemented in phase 2: policies, adapters for GitHub and Azure DevOps, squash publishing; reviewer comments and early pull requests still planned)
 - Date: 2026-10-13
 
 ## Context

@@ -56,27 +56,30 @@ flowchart LR
 
 ## Workspace rules and identity
 
-**[planned]** Each workspace has a `WORKSPACE.md` loaded as shared context by every agent in it: commit conventions, PR template, what agents may and may not do, team vocabulary. Settings that must hold no matter what an agent does live in `workspace.yaml` and are enforced by the bus when it publishes:
+**[now]** Commit identity and AI attribution are workspace settings (console **Settings → Publishing**), applied by the bus when it publishes, because the rules differ between a personal project and an employer:
 
-```yaml
-git:
-  author: { name: "Your Name", email: "you@example.com" }
-  ai_trailer: "Co-Authored-By: Claude <noreply@anthropic.com>"   # or null
-```
+- **Commit identity**: author and committer of published commits, for example `Dana Reyes <dana@example.com>`. Empty: `Forgehall <forgehall@localhost>`.
+- **AI trailer** (default on): adds `Co-Authored-By: Claude <noreply@anthropic.com>` to published commits. Turn it off where the employer's policy asks for it.
+
+Agents commit to the thread branch under their own names (`atlas (forgehall)`); that history stays in the staging remote. What reaches the upstream is one squashed commit per approval, with the workspace identity.
+
+**[planned]** A `WORKSPACE.md` loaded as shared context by every agent in the workspace: commit conventions, PR template, what agents may and may not do, team vocabulary.
 
 ## Approval policies
 
-Each workspace chooses what "approved" means, in the `approval_policy` setting (default `merge`). Only `merge` is implemented.
+Each workspace chooses what "approved" means, in **Settings → Publishing** (default `merge`). In every policy, approving squashes the pinned commit onto the current base branch into one commit (title, the approval summary, the AI trailer if on). Conflicts and a branch that moved since the request are refused and go back to the agent.
 
-| Policy | Status | Typical for | When you approve |
-|---|---|---|---|
-| `merge` | **[now]** | personal | You review the branch diff. Approving merges the pinned commit into the base branch (no working tree, conflicts are refused) and pushes it to the upstream. With real providers, the pull request is meant to exist earlier so CI runs (planned). |
-| `pull_request` | **[planned]** | work | No pull request yet. You review the branch diff and thread history, edit title and description, and **choose the reviewers at approval time**. Approving makes the bus open the pull request; the real approval then happens with the reviewer on the provider. |
-| `branch_only` | **[planned]** | repositories without pull requests | Approving only confirms the pushed branch. The rest is manual. |
+| Policy | Typical for | When you approve |
+|---|---|---|
+| `merge` | personal | The commit becomes the base branch upstream. The thread closes. |
+| `pull_request` | work | You set the title and **choose the reviewers**. The bus pushes the branch `fh/<THREAD-ID>`, opens the pull request on GitHub or Azure DevOps and the thread waits in `external_review`. The real approval is the reviewer's on the host: when the bus sees the pull request merged, the thread closes; closed without merging, the thread is `blocked` and you decide. |
+| `branch_only` | repositories without pull requests | The bus pushes the branch `fh/<THREAD-ID>`. The thread closes; the rest is manual. |
 
-Reviewers are chosen at approval time (rather than fixed in config) because who should review depends on the change. The bus then follows the pull request, and reviewer comments come back to the responsible agent as `decision` messages. Abandoning the pull request cancels the thread.
+Reviewers are chosen at approval time (rather than fixed in config) because who should review depends on the change.
 
-**[now]** `request_approval` on a repository thread creates an approval record pinned to the branch head commit. You approve or request changes in the console or with `POST /api/approvals/:id/decide`; there is no `fh` command for it yet. See [Threads and messages](threads-and-messages.md#repository-threads-and-approvals). The `pull_request` and `branch_only` policies return an error if selected.
+**[now]** `merge` and `branch_only` with any repository; `pull_request` with GitHub and Azure DevOps repositories, using the workspace's write credential (**Settings → Publishing → Host credentials**: GitHub fine-grained token with *Contents* and *Pull requests* read/write; Azure DevOps PAT with *Code (Read & Write)* and *Identity (Read)*). Only the bus holds that credential; agents never get it. The host clients are tested against recorded API behaviour; a full run against a real GitHub or Azure DevOps project is still to be done.
+
+**[planned]** Reviewer comments sent back to the responsible agent as `decision` messages; opening the pull request earlier (when verification starts) so CI runs before you approve; a read-only credential for agents to fetch from real providers.
 
 ## Billing
 

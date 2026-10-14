@@ -18,7 +18,8 @@ In the stack the bus is the `bus` service of `infra/docker/compose.yaml`; the im
 | `CLAIM_WAIT_MS` | `25000` | How long a runner's claim request waits for work before returning 204 |
 | `PERMISSION_TIMEOUT_MS` | `900000` (15 minutes) | How long a permission request waits for you before it counts as denied |
 | `RUN_STALE_SECONDS` | `300` | A running run with no heartbeat for this long is failed and its messages re-queued |
-| `FORGEHALL_HOME` | `~/.forgehall` on the host, `/data` in the stack | Data directory: staging remotes (`staging/<workspace>/<repo>.git`), local upstreams (`upstreams/`) and the `admin-token` file. In the stack the host's `~/.forgehall` is mounted at `/data` |
+| `PR_POLL_SECONDS` | `120` | How often the bus checks the pull requests it opened (`pull_request` policy) for merge or close |
+| `FORGEHALL_HOME` | `~/.forgehall` on the host, `/data` in the stack | Data directory: staging remotes (`staging/<workspace>/<repo>.git`), local upstreams (`upstreams/`), provider tokens (`secrets/providers/`) and the `admin-token` file. In the stack the host's `~/.forgehall` is mounted at `/data` |
 | `FORGEHALL_ADMIN_TOKEN` | unset | Use this admin token instead of reading or creating `$FORGEHALL_HOME/admin-token`. Read by the bus, `fh` and the console's dev server |
 | `FORGEHALL_BUS_URL` | `http://127.0.0.1:4545` | Where **`fh`** (`fh repo add`) and the console's dev server reach the bus |
 | `FORGEHALL_RUNNER_IMAGE` | `forgehall/runner:dev` | Image `fh agent run` starts |
@@ -30,7 +31,29 @@ The bus applies pending migrations at startup. The admin token is created on fir
 
 `FORGEHALL_HOME` on the host and `/data` in the bus container are the same directory. `fh` asks the bus for its home (`GET /health`) to translate paths; see [`fh repo add`](cli.md#fh-repo-add-ws-id-upstream---base-branch).
 
-The approval policy is a workspace setting (column `approval_policy`, default `merge`) with no `fh` option to change it yet; only `merge` is implemented. The machine-wide setting `allow_host_runners` (default off) is changed in the console's Settings or with `PATCH /api/settings` ([console API](console-api.md#settings)).
+The machine-wide setting `allow_host_runners` (default off) is changed in the console's Settings or with `PATCH /api/settings` ([console API](console-api.md#settings)).
+
+### Publishing (per workspace)
+
+Set in the console under Settings, "Publishing", or with `PATCH /api/workspaces/:ws/publishing` ([console API](console-api.md#publishing)). There is no `fh` option for these yet.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Approval policy | `merge` | What approving does: `merge` pushes to the base branch, `branch_only` pushes the thread branch `fh/<THREAD-ID>`, `pull_request` pushes the branch and opens a pull request. See [Deciding an approval](console-api.md#deciding-an-approval) |
+| Commit identity | `Forgehall <forgehall@localhost>` | Author and committer name and e-mail of published commits. Used when empty |
+| AI trailer | on | Adds `Co-Authored-By: Claude <noreply@anthropic.com>` to published commits |
+| Host credentials | none | One token per host (`github`, `azure-devops`). Used by the bus to push, open pull requests and search reviewers |
+
+Required token scopes:
+
+| Host | Token | Scopes |
+|---|---|---|
+| GitHub | fine-grained token | Contents: read and write; Pull requests: read and write |
+| Azure DevOps | personal access token | Code: Read & Write; Identity: Read |
+
+This write token is used only by the bus. Agents never get it.
+
+Tokens are stored in `~/.forgehall/secrets/providers/<workspace>/<provider>.token` (mode `0600`), never in the database and never printed. Do not commit that directory or copy its contents into docs or tickets.
 
 ### `infra/docker/.env` (written by `fh setup`)
 

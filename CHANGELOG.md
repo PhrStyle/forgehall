@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolation and permissions).
 
+### Added
+
+- **Publishing policies.** `pull_request`: approving pushes the thread branch and opens a pull request on GitHub or Azure DevOps with the reviewers you pick on the approval card; the thread waits in `external_review` until the bus sees it merged (closes) or closed (blocked). `branch_only`: approving pushes the branch. Policy per workspace in Settings → Publishing.
+- **Commit identity per workspace** and an optional `Co-Authored-By: Claude` trailer, applied to published commits.
+- **Host credentials** (Settings → Publishing): a write token per workspace and host, kept in `~/.forgehall/secrets/providers` (mode 0600), used only by the bus.
+- `@forgehall/providers`: GitHub and Azure DevOps clients (pull requests, reviewer search, status), URL parsing and git auth headers.
+- API: `GET`/`PATCH /api/workspaces/:ws/publishing`, `PUT`/`DELETE /api/workspaces/:ws/credentials/:provider`, `GET /api/threads/:id/reviewers`; `decide` accepts `reviewers` and `title`. Env `PR_POLL_SECONDS`.
+
 ### Fixed
 
 - A thread with a repository no longer closes with unapproved changes: `complete` is refused while the branch has commits outside the base branch, and a completion made before the push becomes an approval request when the run ends.
@@ -21,6 +29,8 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 
 ### Changed
 
+- Approving now publishes **one squashed commit** per approval, authored by the workspace identity, for every policy (it was a merge commit by "Forgehall" that kept the agents' commits). The agents' per-run commits stay in the staging remote.
+- `fh repo add` detects the host from the URL (`github`, `azure-devops`, else `local`) and strips credentials embedded in it.
 - **Agents run isolated by default.** Runners report a mode (`container`, `vm`, `host`) in `POST /runner/claim`; the bus answers `403` to `host` runners and the runner exits with an explanation, unless the setting `allow_host_runners` is on (console Settings, "Allow agents directly on this machine"). Host runs get no standing permissions and every tool use is asked. The mode is self-reported.
 - **The bus runs in the Docker stack** (`infra/docker/compose.yaml`), published on `127.0.0.1:4545` only and reachable by agents as `http://bus:4545` on the `forgehall-agents` network; it mounts `~/.forgehall` at `/data`. `FORGEHALL_HOME` is `/data` there.
 - **The console API requires an admin token** (`Authorization: Bearer <~/.forgehall/admin-token>`) on everything under `/api`; without it, `401`. The console dev and preview server adds it when proxying. Breaking for scripts that called `/api` without it.
