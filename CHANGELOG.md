@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolation and permissions).
 
+### Fixed
+
+- A thread with a repository no longer closes with unapproved changes: `complete` is refused while the branch has commits outside the base branch, and a completion made before the push becomes an approval request when the run ends.
+- Model routing counts only failures since the last successful run, so a thread no longer stays on Opus after an earlier failure.
+- Runner image: the agent work directory belongs to the `agent` user, so new work volumes are writable (checkouts failed with a root-owned volume).
+- Git errors from the runner show git's reason instead of the command line.
+- Claude account tokens pasted with line breaks (terminal wrapping) are accepted; malformed tokens get a clearer error.
+- Postgres restarts with the stack after a reboot (`restart: unless-stopped`).
+
+### Security
+
+- The runner passes the agent's git credentials through the environment instead of the command line, and masks `Basic`/`Bearer` values in errors. Before, a failed checkout could put the agent token (base64) in logs and run errors. Restart agents with `fh agent run` to rotate their tokens.
+
 ### Changed
 
 - **Agents run isolated by default.** Runners report a mode (`container`, `vm`, `host`) in `POST /runner/claim`; the bus answers `403` to `host` runners and the runner exits with an explanation, unless the setting `allow_host_runners` is on (console Settings, "Allow agents directly on this machine"). Host runs get no standing permissions and every tool use is asked. The mode is self-reported.
