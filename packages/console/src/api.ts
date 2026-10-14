@@ -42,7 +42,23 @@ export interface ThreadOverview {
   branch?: string | null;
 }
 
-export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: string; base_branch: string }
+export type RepoProvider = "local" | "github" | "azure-devops";
+export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: RepoProvider; base_branch: string }
+
+export type ApprovalPolicy = "merge" | "pull_request" | "branch_only";
+export type HostProvider = "github" | "azure-devops";
+export interface HostCredential { provider: HostProvider; token_hint: string; created_at: string }
+export interface Publishing {
+  approval_policy: ApprovalPolicy;
+  git_author_name: string | null;
+  git_author_email: string | null;
+  ai_trailer: boolean;
+  credentials: HostCredential[];
+}
+export type PublishingPatch = Partial<Pick<Publishing, "approval_policy" | "git_author_name" | "git_author_email" | "ai_trailer">>;
+export interface Reviewer { id: string; displayName: string; uniqueName: string }
+export interface PullRequestRef { id: string; url: string; status: "open" | "merged" | "closed" }
+export interface ApprovalResult { merged?: string; commit?: string; branch?: string; pr?: PullRequestRef; warnings?: string[] }
 
 export interface BranchDiff {
   base: string;
@@ -58,13 +74,13 @@ export interface BranchDiff {
 export interface Approval {
   id: string;
   thread_id: string;
-  policy: string;
+  policy: ApprovalPolicy;
   requested_by: string;
   summary: string;
   head_sha: string | null;
   state: "pending" | "approved" | "rejected" | "superseded";
   comment: string | null;
-  result: { merged?: string } | null;
+  result: ApprovalResult | null;
   created_at: string;
   decided_at: string | null;
 }
@@ -165,8 +181,17 @@ export const api = {
   repos: (ws: string) => request<RepoRow[]>(`/api/workspaces/${enc(ws)}/repos`),
   diff: (id: string) => request<BranchDiff>(`/api/threads/${enc(id)}/diff`),
   approvals: (id: string) => request<Approval[]>(`/api/threads/${enc(id)}/approvals`),
-  decide: (id: string, b: { decision: "approve" | "reject"; comment?: string }) =>
+  decide: (id: string, b: { decision: "approve" | "reject"; comment?: string; reviewers?: string[]; title?: string }) =>
     request<Approval>(`/api/approvals/${enc(id)}/decide`, { method: "POST", body: JSON.stringify(b) }),
+  publishing: (ws: string) => request<Publishing>(`/api/workspaces/${enc(ws)}/publishing`),
+  patchPublishing: (ws: string, b: PublishingPatch) =>
+    request<Publishing>(`/api/workspaces/${enc(ws)}/publishing`, { method: "PATCH", body: JSON.stringify(b) }),
+  // Like Claude tokens: only travels in the request body, never returned.
+  saveCredential: (ws: string, provider: HostProvider, token: string) =>
+    request<HostCredential>(`/api/workspaces/${enc(ws)}/credentials/${enc(provider)}`, { method: "PUT", body: JSON.stringify({ token }) }),
+  deleteCredential: (ws: string, provider: HostProvider) =>
+    request<void>(`/api/workspaces/${enc(ws)}/credentials/${enc(provider)}`, { method: "DELETE" }),
+  reviewers: (threadId: string, q: string) => request<Reviewer[]>(`/api/threads/${enc(threadId)}/reviewers?q=${enc(q)}`),
   runs: (ws: string, limit = 50) => request<Run[]>(`/api/workspaces/${enc(ws)}/runs?limit=${limit}`),
   usage: (ws: string) => request<Usage>(`/api/workspaces/${enc(ws)}/usage`),
   thread: (id: string) => request<ThreadDetail>(`/api/threads/${enc(id)}`),

@@ -18,7 +18,7 @@ export const STATE_LABEL: Record<ThreadState, string> = {
   in_progress: "In progress",
   verifying: "Verifying",
   awaiting_approval: "Awaiting approval",
-  external_review: "External review",
+  external_review: "In review",
   done: "Done",
   blocked: "Blocked",
   cancelled: "Cancelled",

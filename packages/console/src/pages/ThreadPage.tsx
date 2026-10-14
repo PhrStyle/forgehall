@@ -2,7 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
-import { api, HUMAN, type Approval, type BranchDiff, type Message, type MessageType, type Run } from "../api";
+import { api, HUMAN, type Approval, type ApprovalResult, type Reviewer, type BranchDiff, type Message, type MessageType, type Run } from "../api";
+import { ReviewerPicker } from "../components/ReviewerPicker";
 import { PermissionList } from "../components/PermissionCard";
 import { useAgents, useApprovals, useDiff, usePermissions, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
@@ -91,7 +92,7 @@ export function ThreadPage() {
 
           <div className="side-cards">
             {hasRepo && <BranchCard threadId={thread.id} />}
-            {hasRepo ? <RepoApprovalCard threadId={thread.id} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
+            {hasRepo ? <RepoApprovalCard threadId={thread.id} title={thread.title} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
             <div className="card">
               <h3>Runs <span className="mono">{runs.length}</span></h3>
               {runs.length === 0 ? <p className="empty">No runs yet.</p> : (
@@ -330,16 +331,34 @@ function policyLabel(policy: string, base?: string): string {
   return policy.replace(/_/g, " ");
 }
 
-function RepoApprovalCard({ threadId }: { threadId: string }) {
+const PR_TONE = { open: "warn", merged: "ok", closed: "err" } as const;
+
+function ApprovalResultView({ result, base }: { result: ApprovalResult | null; base?: string }) {
+  if (!result) return null;
+  const { merged, commit, branch, pr, warnings } = result;
+  return (
+    <>
+      {merged && <p className="ap-result">Merged into {base ?? "base"} as <span className="mono">{short(merged)}</span></p>}
+      {!merged && branch && <p className="ap-result">Pushed branch <span className="mono">{branch}</span>{commit && <> at <span className="mono">{short(commit)}</span></>}</p>}
+      {pr && <p className="ap-result"><a href={pr.url} target="_blank" rel="noreferrer">Pull request #{pr.id}</a> <Chip tone={PR_TONE[pr.status]}>{pr.status}</Chip></p>}
+      {warnings && warnings.length > 0 && <div className="warnbox" role="status"><ul style={{ margin: 0, paddingLeft: 16 }}>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>}
+    </>
+  );
+}
+
+function RepoApprovalCard({ threadId, title }: { threadId: string; title: string }) {
   const qc = useQueryClient();
   const { toast } = useApp();
   const ap = useApprovals(threadId, true);
   const diff = useDiff(threadId, true);
   const [comment, setComment] = useState("");
   const [bad, setBad] = useState(false);
+  const [prTitle, setPrTitle] = useState<string | null>(null);
+  const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const decide = useMutation({
-    mutationFn: (b: { id: string; decision: "approve" | "reject"; comment?: string }) => api.decide(b.id, { decision: b.decision, ...(b.comment ? { comment: b.comment } : {}) }),
-    onSuccess: (_a, b) => { toast(b.decision === "approve" ? "Approved" : "Changes requested"); setComment(""); setBad(false); },
+    mutationFn: (b: { id: string; decision: "approve" | "reject"; comment?: string; reviewers?: string[]; title?: string }) =>
+      api.decide(b.id, { decision: b.decision, ...(b.comment ? { comment: b.comment } : {}), ...(b.reviewers ? { reviewers: b.reviewers } : {}), ...(b.title ? { title: b.title } : {}) }),
+    onSuccess: (_a, b) => { toast(b.decision === "approve" ? "Approved" : "Changes requested"); setComment(""); setBad(false); setReviewers([]); setPrTitle(null); },
     onSettled: () => void qc.invalidateQueries({ queryKey: ["thread", threadId] }),
   });
   const list = ap.data ?? [];
@@ -350,6 +369,9 @@ function RepoApprovalCard({ threadId }: { threadId: string }) {
   const base = diff.data?.base;
   const pending = latest.state === "pending";
   const pinning = pending && !latest.head_sha;
+  const isPr = latest.policy === "pull_request";
+  const approveLabel = isPr ? "Approve and open pull request" : latest.policy === "branch_only" ? "Approve and push branch" : "Approve and merge";
+  const effTitle = prTitle ?? title;
   const moved = pending && !!latest.head_sha && !!diff.data?.headSha && diff.data.headSha !== latest.head_sha;
 
   return (
@@ -364,16 +386,24 @@ function RepoApprovalCard({ threadId }: { threadId: string }) {
       {moved && <div className="warnbox">The branch has new commits since approval was requested ({short(latest.head_sha)} → {short(diff.data?.headSha)}). Approving will be refused; ask the agent to request approval again.</div>}
       {pending && (
         <>
+          {isPr && (
+            <>
+              <label className="field" style={{ marginBottom: 10 }}>Title
+                <input value={effTitle} maxLength={200} onChange={(e) => setPrTitle(e.target.value)} />
+              </label>
+              <ReviewerPicker threadId={threadId} selected={reviewers} onChange={setReviewers} />
+            </>
+          )}
           <textarea className={bad ? "bad" : ""} value={comment} onChange={(e) => { setComment(e.target.value); setBad(false); }} placeholder="Comment (required to request changes)" />
           {bad && <div className="errmsg">Say what should change.</div>}
           <ErrorBox error={decide.error} />
           <div className="acts">
-            <button className="btn primary" disabled={pinning || decide.isPending} title={pinning ? "Waiting for the agent's run to end" : undefined} onClick={() => decide.mutate({ id: latest.id, decision: "approve", ...(comment.trim() ? { comment: comment.trim() } : {}) })}>{decide.isPending ? "Working…" : `Approve and merge`}</button>
+            <button className="btn primary" disabled={pinning || decide.isPending} title={pinning ? "Waiting for the agent's run to end" : undefined} onClick={() => decide.mutate({ id: latest.id, decision: "approve", ...(comment.trim() ? { comment: comment.trim() } : {}), ...(isPr ? { reviewers: reviewers.map((r) => r.id), ...(effTitle.trim() ? { title: effTitle.trim() } : {}) } : {}) })}>{decide.isPending ? "Working…" : approveLabel}</button>
             <button className="btn" disabled={decide.isPending} onClick={() => { if (!comment.trim()) return setBad(true); decide.mutate({ id: latest.id, decision: "reject", comment: comment.trim() }); }}>Request changes</button>
           </div>
         </>
       )}
-      {latest.state === "approved" && <p className="ap-result">{latest.result?.merged ? <>Merged into {base ?? "base"} as <span className="mono">{short(latest.result.merged)}</span></> : "Approved."}{latest.comment ? <span className="muted"> · {latest.comment}</span> : null}</p>}
+      {latest.state === "approved" && <><p className="ap-result">Approved.{latest.comment ? <span className="muted"> · {latest.comment}</span> : null}</p><ApprovalResultView result={latest.result} base={base} /></>}
       {latest.state === "rejected" && <p className="ap-result">Changes requested{latest.comment ? <>: <span className="muted">{latest.comment}</span></> : ""}</p>}
       {latest.state === "superseded" && <p className="ap-result muted">Superseded{latest.comment ? `: ${latest.comment}` : ""}</p>}
       {older.length > 0 && (

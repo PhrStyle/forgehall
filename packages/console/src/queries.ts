@@ -28,3 +28,4 @@ export const useApprovals = (id: string | undefined, enabled: boolean) => useQue
 export const usePermissions = (ws: string | null) => useQuery({ queryKey: ["permissions", ws], queryFn: () => api.permissions(ws!), enabled: !!ws, placeholderData: keepPreviousData, refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api.settings });
 export const useAccounts = () => useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
+export const usePublishing = (ws: string | null) => useQuery({ queryKey: ["publishing", ws], queryFn: () => api.publishing(ws!), enabled: !!ws });

@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, type Account, type AccountPlan } from "../api";
+import { api, type Account, type AccountPlan, type ApprovalPolicy, type HostCredential, type HostProvider } from "../api";
 import { useApp } from "../context";
-import { useAccounts, useSettings } from "../queries";
+import { useAccounts, usePublishing, useSettings } from "../queries";
 import { ago } from "../util";
 import { Chip, ErrorBox, Icon, ModelChip, PreviewBadge } from "../ui";
 
@@ -47,12 +47,12 @@ const planLabel = (p: string) => PLANS.find(([k]) => k === p)?.[1] ?? p;
 const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 
-function TokenInput({ value, onChange, label, autoFocus }: { value: string; onChange: (v: string) => void; label: string; autoFocus?: boolean }) {
+function TokenInput({ value, onChange, label, autoFocus, placeholder = "sk-ant-oat01-…" }: { value: string; onChange: (v: string) => void; label: string; autoFocus?: boolean; placeholder?: string }) {
   const [shown, setShown] = useState(false);
   return (
     <div style={{ display: "flex", gap: 6 }}>
       <input className="input" style={{ flex: 1 }} type={shown ? "text" : "password"} autoComplete="off" spellCheck={false} autoCapitalize="off" autoFocus={autoFocus}
-        aria-label={label} placeholder="sk-ant-oat01-…" value={value} onChange={(e) => onChange(e.target.value)} />
+        aria-label={label} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
       <button type="button" className="btn sm" aria-pressed={shown} onClick={() => setShown(!shown)}>{shown ? "Hide" : "Show"}</button>
     </div>
   );
@@ -180,6 +180,127 @@ function WorkspaceAccounts({ accounts }: { accounts: Account[] }) {
   );
 }
 
+const POLICIES: [ApprovalPolicy, string, string][] = [
+  ["merge", "Merge", "Approving merges into the base branch and publishes it."],
+  ["pull_request", "Pull request", "Approving pushes the branch and opens a pull request for the reviewers you pick."],
+  ["branch_only", "Branch only", "Approving only pushes the branch to the host."],
+];
+const HOSTS: [HostProvider, string, string][] = [
+  ["github", "GitHub", "ghp_… or github_pat_…"],
+  ["azure-devops", "Azure DevOps", "Personal access token"],
+];
+
+function CredentialRow({ ws, provider, label, placeholder, cred, onChanged }: { ws: string; provider: HostProvider; label: string; placeholder: string; cred?: HostCredential; onChanged: () => void }) {
+  const [mode, setMode] = useState<"none" | "set" | "remove">("none");
+  const [token, setToken] = useState("");
+  const save = useMutation({
+    mutationFn: () => api.saveCredential(ws, provider, token.trim()),
+    onSuccess: () => { setToken(""); setMode("none"); onChanged(); },
+  });
+  const del = useMutation({ mutationFn: () => api.deleteCredential(ws, provider), onSuccess: () => { setMode("none"); onChanged(); } });
+  const cancel = () => { setMode("none"); setToken(""); save.reset(); del.reset(); };
+  return (
+    <div className="li" style={{ gridTemplateColumns: "minmax(0,1fr)" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", justifyContent: "space-between" }}>
+        <div style={{ minWidth: 0 }}>
+          <div className="t">{label}</div>
+          <div className="d">{cred ? <><span className="mono">…{cred.token_hint}</span> · added {ago(cred.created_at)}</> : "Not set"}</div>
+        </div>
+        {mode === "none" && (
+          <div className="r">
+            <button className="btn sm" onClick={() => setMode("set")}>{cred ? "Replace token" : "Add token"}</button>
+            {cred && <button className="btn sm danger" onClick={() => setMode("remove")}>Remove</button>}
+          </div>
+        )}
+      </div>
+      {mode === "set" && (
+        <form style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 8, flexWrap: "wrap" }}
+          onSubmit={(e) => { e.preventDefault(); if (token.trim()) save.mutate(); }}>
+          <div style={{ flex: 1, minWidth: 240 }}><TokenInput value={token} onChange={setToken} label={`${cred ? "New token" : "Token"} for ${label}`} placeholder={placeholder} autoFocus /></div>
+          <button className="btn sm primary" type="submit" disabled={!token.trim() || save.isPending}>Save</button>
+          <button className="btn sm ghost" type="button" onClick={cancel}>Cancel</button>
+        </form>
+      )}
+      {mode === "remove" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }} role="alertdialog" aria-label="Confirm removal">
+          <span>Remove the {label} token? Approvals will not be able to publish to {label}.</span>
+          <button className="btn sm danger" disabled={del.isPending} onClick={() => del.mutate()}>Remove</button>
+          <button className="btn sm ghost" onClick={cancel}>Cancel</button>
+        </div>
+      )}
+      <ErrorBox error={save.error ?? del.error} />
+    </div>
+  );
+}
+
+function PublishingForm({ ws, wsName }: { ws: string; wsName: string }) {
+  const qc = useQueryClient();
+  const q = usePublishing(ws);
+  const p = q.data;
+  const m = useMutation({
+    mutationFn: (b: Parameters<typeof api.patchPublishing>[1]) => api.patchPublishing(ws, b),
+    onSuccess: (d) => qc.setQueryData(["publishing", ws], d),
+  });
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  useEffect(() => { if (p) { setName(p.git_author_name ?? ""); setEmail(p.git_author_email ?? ""); } }, [p?.git_author_name, p?.git_author_email]); // eslint-disable-line react-hooks/exhaustive-deps
+  const changed = !!p && (name.trim() !== (p.git_author_name ?? "") || email.trim() !== (p.git_author_email ?? ""));
+  const policy = p?.approval_policy ?? "merge";
+  const trailer = p?.ai_trailer ?? false;
+  const credsChanged = () => void qc.invalidateQueries({ queryKey: ["publishing", ws] });
+  return (
+    <>
+      <div className="section-title" style={{ marginTop: 18 }}><span>Publishing</span><span className="faint">workspace <span className="mono">{wsName}</span></span></div>
+      <ErrorBox error={q.error} />
+      {q.isLoading && <p className="empty">Loading…</p>}
+      {p && (
+        <div style={{ maxWidth: 700, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="field">
+            <label htmlFor="approval-policy">Approval policy</label>
+            <select id="approval-policy" className="select" value={policy} disabled={m.isPending} aria-describedby="approval-policy-desc"
+              onChange={(e) => m.mutate({ approval_policy: e.target.value as ApprovalPolicy })}>
+              {POLICIES.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+            </select>
+            <span className="faint" id="approval-policy-desc">{POLICIES.find(([k]) => k === policy)?.[2]}</span>
+          </div>
+          <form style={{ display: "flex", flexDirection: "column", gap: 8 }} onSubmit={(e) => { e.preventDefault(); if (changed) m.mutate({ git_author_name: name.trim() || null, git_author_email: email.trim() || null }); }}>
+            <b>Commit identity</b>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+              <label className="field">Name<input value={name} placeholder="Forgehall" maxLength={100} onChange={(e) => setName(e.target.value)} /></label>
+              <label className="field">E-mail<input type="email" value={email} placeholder="forgehall@localhost" maxLength={200} onChange={(e) => setEmail(e.target.value)} /></label>
+            </div>
+            <span className="faint">Published commits use this author. Empty: Forgehall &lt;forgehall@localhost&gt;.</span>
+            <div><button className="btn sm primary" type="submit" disabled={!changed || m.isPending}>Save</button></div>
+          </form>
+          <div className="switch-row">
+            <div className="txt">
+              <b id="ai-trailer-label">Add the AI co-author trailer</b>
+              <span className="muted" id="ai-trailer-desc">Adds <span className="mono">Co-Authored-By: Claude &lt;noreply@anthropic.com&gt;</span> to published commits.</span>
+            </div>
+            <button type="button" role="switch" className="switch" aria-checked={trailer} aria-labelledby="ai-trailer-label" aria-describedby="ai-trailer-desc"
+              disabled={m.isPending} onClick={() => m.mutate({ ai_trailer: !trailer })} />
+          </div>
+          <ErrorBox error={m.error} />
+          <div>
+            <b>Host credentials</b>
+            <p className="muted" style={{ margin: "4px 0 8px" }}>Write token used only by the bus to push approved branches and open pull requests. Agents never get it. GitHub: fine-grained token with Contents and Pull requests read/write. Azure DevOps: PAT with Code (Read &amp; Write) and Identity (Read).</p>
+            <div className="list">{HOSTS.map(([k, n, ph]) => (
+              <CredentialRow key={k} ws={ws} provider={k} label={n} placeholder={ph} cred={p.credentials.find((c) => c.provider === k)} onChanged={credsChanged} />
+            ))}</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function PublishingSection() {
+  const app = useApp();
+  const w = app.workspaces.find((x) => x.id === app.workspace);
+  if (!w) return null;
+  return <PublishingForm key={w.id} ws={w.id} wsName={w.name} />;
+}
+
 function AccountsSection() {
   const qc = useQueryClient();
   const q = useAccounts();
@@ -208,6 +329,7 @@ export function Settings() {
       <div className="main-body">
         <IsolationSection />
         <AccountsSection />
+        <PublishingSection />
         <PreviewBadge />
         <div className="section-title"><span>Bus</span></div>
         <div className="kv">
