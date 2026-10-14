@@ -1,3 +1,4 @@
+import { ensureAdminToken } from "./admin.js";
 import { connect, migrate } from "./db.js";
 import { registerApi } from "./api.js";
 import { registerGitHttp } from "./git-http.js";
@@ -18,8 +19,9 @@ async function main() {
   const app = buildHttp(store, {
     maxRunning: Number(process.env.MAX_RUNNING ?? 2),
     claimWaitMs: Number(process.env.CLAIM_WAIT_MS ?? 25_000),
+    permissionTimeoutMs: Number(process.env.PERMISSION_TIMEOUT_MS ?? 15 * 60_000),
   });
-  await registerApi(app, store);
+  await registerApi(app, store, await ensureAdminToken());
   await registerGitHttp(app, store);
   // Runs whose runner went silent are failed and their messages re-queued.
   const staleAfter = Number(process.env.RUN_STALE_SECONDS ?? 300);
@@ -32,8 +34,10 @@ async function main() {
   app.addHook("onClose", async () => clearInterval(reaper));
   if (applied.length) app.log.info({ applied }, "migrations applied");
   const port = Number(process.env.PORT ?? 4545);
-  // Loopback only: agent tokens travel in plain HTTP and the API has no TLS yet.
+  // On the host: loopback only. In the stack container HOST=0.0.0.0, published only to the host's
+  // loopback; agents reach it on the agents network, where /api needs the admin token they lack.
   await app.listen({ host: process.env.HOST ?? "127.0.0.1", port });
+
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

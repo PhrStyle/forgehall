@@ -1,7 +1,8 @@
-import { RunEvent, RunFinish } from "@forgehall/shared";
+import { isIsolated, RunEvent, RunFinish, RunnerMode } from "@forgehall/shared";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z } from "zod";
+import { forgehallHome } from "./git.js";
 import { busMcpServer } from "./mcp.js";
 import { BusError, type AgentRow, type Store } from "./store.js";
 
@@ -10,6 +11,8 @@ export interface HttpOptions {
   maxRunning: number;
   /** How long a runner's claim request waits for work before returning 204. */
   claimWaitMs: number;
+  /** How long a permission request waits for the user before it is denied. */
+  permissionTimeoutMs: number;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -31,13 +34,14 @@ export function buildHttp(store: Store, opts: HttpOptions): FastifyInstance {
     return reply.code(500).send({ error: "internal error" });
   });
 
-  app.get("/health", async () => ({ ok: true }));
+  // `home` lets the fh CLI translate host paths under ~/.forgehall when the bus runs in a container.
+  app.get("/health", async () => ({ ok: true, home: forgehallHome() }));
 
   // ---------- MCP (agents) ----------
   app.post("/mcp", async (req, reply) => {
     const agent = await agentOf(req);
     if (!agent) return reply.code(401).send({ error: "invalid agent token" });
-    const server = busMcpServer(store, agent);
+    const server = busMcpServer(store, agent, { permissionTimeoutMs: opts.permissionTimeoutMs });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     reply.hijack();
     reply.raw.on("close", () => {
@@ -55,10 +59,16 @@ export function buildHttp(store: Store, opts: HttpOptions): FastifyInstance {
   app.post("/runner/claim", async (req, reply) => {
     const agent = await agentOf(req);
     if (!agent) return reply.code(401).send({ error: "invalid agent token" });
+    const mode = RunnerMode.catch("host").parse((req.body as { mode?: unknown } | undefined)?.mode ?? "host");
+    if (!isIsolated(mode) && !(await store.setting("allow_host_runners", false))) {
+      return reply.code(403).send({
+        error: "Agents running directly on this machine are disabled. Start the agent isolated (fh agent run <ws> <agent>), or enable \"Allow agents on this machine\" in Settings.",
+      });
+    }
     await store.touchRunner(agent);
     const deadline = Date.now() + opts.claimWaitMs;
     for (;;) {
-      const claim = await store.claimRun(agent, opts.maxRunning);
+      const claim = await store.claimRun(agent, opts.maxRunning, mode);
       if (claim) return claim;
       if (Date.now() >= deadline) return reply.code(204).send();
       await sleep(1000);

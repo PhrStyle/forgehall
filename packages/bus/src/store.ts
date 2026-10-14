@@ -1,10 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
-import { HUMAN, SYSTEM, type MessageType, type Model, type Outcome, type RunClaim, type RunEvent, type RunFinish, type ThreadState } from "@forgehall/shared";
+import { HUMAN, SYSTEM, type RunnerMode, type MessageType, type Model, type Outcome, type RunClaim, type RunEvent, type RunFinish, type ThreadState } from "@forgehall/shared";
 import type postgres from "postgres";
 import type { Sql } from "./db.js";
 
 type Tx = Sql | postgres.TransactionSql;
 import { branchDiff, ensureStaging, MergeConflictError, mergeAndPublish, revParse, stagingPath, threadBranch } from "./git.js";
+import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
 
@@ -15,7 +16,7 @@ export interface AgentRow {
   role: string;
   default_model: Model;
   accepts_from: string[];
-  config: { prompt?: string; allowedTools?: string[] };
+  config: { prompt?: string; allowedTools?: string[]; permissions?: Partial<PermissionRules> };
 }
 
 export interface ThreadRow {
@@ -67,6 +68,22 @@ export interface ApprovalRow {
   decided_at: Date | null;
 }
 
+export interface PermissionRow {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  run_id: string | null;
+  thread_id: string | null;
+  tool_name: string;
+  input: Record<string, unknown>;
+  rule: string;
+  state: "pending" | "allowed" | "denied" | "expired";
+  remember: boolean;
+  reason: string | null;
+  created_at: Date;
+  decided_at: Date | null;
+}
+
 export class BusError extends Error {}
 
 const DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"];
@@ -85,7 +102,8 @@ export type Change =
   | { kind: "message"; workspace: string; thread: string; message: string }
   | { kind: "run"; workspace: string; thread: string; run: number; state: string }
   | { kind: "run_event"; workspace: string; run: number }
-  | { kind: "agent"; workspace: string; agent: string };
+  | { kind: "agent"; workspace: string; agent: string }
+  | { kind: "permission"; workspace: string; permission: string; thread: string | null };
 
 export const CHANGES_CHANNEL = "forgehall_changes";
 
@@ -267,7 +285,7 @@ export class Store {
     if (prev?.stale) await notify(this.sql, { kind: "agent", workspace: agent.workspace_id, agent: agent.id });
   }
 
-  async claimRun(agent: AgentRow, maxRunningPerWorkspace: number): Promise<RunClaim | null> {
+  async claimRun(agent: AgentRow, maxRunningPerWorkspace: number, mode: RunnerMode = "container"): Promise<RunClaim | null> {
     return this.sql.begin(async (tx) => {
       // Serialize claims per workspace so the concurrency cap holds.
       await tx`SELECT pg_advisory_xact_lock(hashtext(${agent.workspace_id}))`;
@@ -284,7 +302,7 @@ export class Store {
           AND NOT EXISTS (SELECT 1 FROM runs o WHERE o.thread_id = runs.thread_id AND o.state = 'running')
         ORDER BY priority, queued_at LIMIT 1 FOR UPDATE SKIP LOCKED`;
       if (!run) return null;
-      await tx`UPDATE runs SET state = 'running', started_at = now(), heartbeat_at = now() WHERE id = ${run.id}`;
+      await tx`UPDATE runs SET state = 'running', started_at = now(), heartbeat_at = now(), runner_mode = ${mode} WHERE id = ${run.id}`;
       await notify(tx, { kind: "run", workspace: agent.workspace_id, thread: run.thread_id, run: Number(run.id), state: "running" });
       const pending = await tx<MessageRow[]>`UPDATE messages SET delivered_run = ${run.id}
         WHERE thread_id = ${run.thread_id} AND to_actor = ${agent.id} AND delivered_run IS NULL RETURNING *`;
@@ -305,7 +323,9 @@ export class Store {
         sessionId: session?.session_id ?? null,
         prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session) }),
         agentPrompt: agent.config.prompt ?? "",
-        allowedTools: agent.config.allowedTools ?? DEFAULT_TOOLS,
+        allowedTools: rulesFor(mode, agent.config.permissions).allow,
+        permissions: rulesFor(mode, agent.config.permissions),
+        runnerMode: mode,
         repo: thread!.repo_id && thread!.branch
           ? { id: thread!.repo_id, base: (await tx<{ base_branch: string }[]>`SELECT base_branch FROM repos WHERE workspace_id = ${agent.workspace_id} AND id = ${thread!.repo_id}`)[0]!.base_branch, branch: thread!.branch }
           : null,
@@ -532,6 +552,75 @@ export class Store {
       body: `Approved and merged into ${repo.base_branch} as ${merged.slice(0, 7)}.${comment?.trim() ? ` ${comment.trim()}` : ""}`,
     });
     return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
+  }
+
+  // ---------- settings & tool permissions ----------
+
+  async setting<T>(key: string, fallback: T): Promise<T> {
+    const [row] = await this.sql<{ value: T }[]>`SELECT value FROM settings WHERE key = ${key}`;
+    return row ? row.value : fallback;
+  }
+
+  async settings(): Promise<Record<string, unknown>> {
+    const rows = await this.sql<{ key: string; value: unknown }[]>`SELECT key, value FROM settings ORDER BY key`;
+    return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+  }
+
+  async setSetting(key: string, value: unknown): Promise<void> {
+    await this.sql`INSERT INTO settings (key, value) VALUES (${key}, ${this.sql.json(value as never)})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
+  }
+
+  /** Records a tool use the agent needs the user to approve, tied to the agent's current run. */
+  async createPermissionRequest(agent: AgentRow, toolName: string, input: unknown): Promise<PermissionRow> {
+    const [run] = await this.sql<{ id: string; thread_id: string }[]>`SELECT id, thread_id FROM runs
+      WHERE workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} AND state = 'running' ORDER BY id DESC LIMIT 1`;
+    const [row] = await this.sql<PermissionRow[]>`INSERT INTO permission_requests (workspace_id, agent_id, run_id, thread_id, tool_name, input, rule)
+      VALUES (${agent.workspace_id}, ${agent.id}, ${run?.id ?? null}, ${run?.thread_id ?? null}, ${toolName}, ${this.sql.json((input ?? {}) as never)}, ${suggestRule(toolName, input)})
+      RETURNING *`;
+    await notify(this.sql, { kind: "permission", workspace: agent.workspace_id, permission: row!.id, thread: row!.thread_id });
+    return row!;
+  }
+
+  async permission(id: string | number): Promise<PermissionRow | null> {
+    const [row] = await this.sql<PermissionRow[]>`SELECT * FROM permission_requests WHERE id = ${id}`;
+    return row ?? null;
+  }
+
+  async permissions(workspaceId: string, state = "pending"): Promise<PermissionRow[]> {
+    return this.sql<PermissionRow[]>`SELECT * FROM permission_requests WHERE workspace_id = ${workspaceId} AND state = ${state} ORDER BY id`;
+  }
+
+  /** Waits for the user's answer; unanswered requests expire (deny) so runs do not hang. */
+  async awaitPermission(id: string, timeoutMs: number): Promise<PermissionRow> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const row = await this.permission(id);
+      if (row && row.state !== "pending") return row;
+      if (Date.now() >= deadline) {
+        const [expired] = await this.sql<PermissionRow[]>`UPDATE permission_requests SET state = 'expired', decided_at = now()
+          WHERE id = ${id} AND state = 'pending' RETURNING *`;
+        if (expired) await notify(this.sql, { kind: "permission", workspace: expired.workspace_id, permission: expired.id, thread: expired.thread_id });
+        return expired ?? (await this.permission(id))!;
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+
+  /** The user answers a request. "Remember" adds the suggested rule to the agent's allow list (isolated runners only). */
+  async decidePermission(id: number, allow: boolean, remember: boolean, reason: string | null): Promise<PermissionRow> {
+    const [row] = await this.sql<PermissionRow[]>`UPDATE permission_requests
+      SET state = ${allow ? "allowed" : "denied"}, remember = ${allow && remember}, reason = ${reason}, decided_at = now()
+      WHERE id = ${id} AND state = 'pending' RETURNING *`;
+    if (!row) throw new BusError(`permission request ${id} is not pending`);
+    if (allow && remember) {
+      const agent = await this.agent(row.workspace_id, row.agent_id);
+      const current = agent?.config.permissions ?? {};
+      const permissions = { ...current, allow: [...new Set([...(current.allow ?? []), row.rule])] };
+      await this.sql`UPDATE agents SET config = config || ${this.sql.json({ permissions })} WHERE workspace_id = ${row.workspace_id} AND id = ${row.agent_id}`;
+    }
+    await notify(this.sql, { kind: "permission", workspace: row.workspace_id, permission: row.id, thread: row.thread_id });
+    return row;
   }
 
   // ---------- read models for the console ----------

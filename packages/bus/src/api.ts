@@ -2,13 +2,21 @@ import { EventEmitter } from "node:events";
 import { HUMAN, MessageType } from "@forgehall/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { isAdmin } from "./admin.js";
 import { CHANGES_CHANNEL, type Change, type Store } from "./store.js";
 
 /**
  * Console API: read models, human actions and a live change stream (SSE).
  * Served on loopback only, like the rest of the bus; there is no user auth yet.
  */
-export async function registerApi(app: FastifyInstance, store: Store): Promise<void> {
+export async function registerApi(app: FastifyInstance, store: Store, adminToken: string): Promise<void> {
+  // Everything under /api acts as the user: require the admin token (the console proxy adds it).
+  app.addHook("onRequest", async (req, reply) => {
+    if (req.url.startsWith("/api/") && !isAdmin(req.headers.authorization, adminToken)) {
+      return reply.code(401).send({ error: "admin token required" });
+    }
+  });
+
   const changes = new EventEmitter();
   changes.setMaxListeners(0);
   // Every write path (bus, runners, the fh CLI) notifies through Postgres, so this sees them all.
@@ -47,6 +55,13 @@ export async function registerApi(app: FastifyInstance, store: Store): Promise<v
 
   // Human actions. The sender is always the user; agents act only through MCP.
   app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/repos", async (req) => store.repos(req.params.ws));
+
+  // Repos are registered through the bus because it owns the staging remotes (it may run in a container).
+  const NewRepo = z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/i), upstream: z.string().min(1), base: z.string().optional() });
+  app.post<{ Params: { ws: string } }>("/api/workspaces/:ws/repos", async (req, reply) => {
+    const r = NewRepo.parse(req.body);
+    return reply.code(201).send(await store.upsertRepo({ workspaceId: req.params.ws, id: r.id, upstreamUrl: r.upstream, ...(r.base ? { base: r.base } : {}) }));
+  });
 
   app.get<{ Params: { id: string } }>("/api/threads/:id/diff", async (req) => store.threadDiff(req.params.id));
 
@@ -98,6 +113,23 @@ export async function registerApi(app: FastifyInstance, store: Store): Promise<v
   app.post<{ Params: { id: string } }>("/api/threads/:id/reopen", async (req, reply) => {
     await store.reopenThread(req.params.id, Reopen.parse(req.body).note);
     return reply.code(204).send();
+  });
+
+  app.get("/api/settings", async () => store.settings());
+  const SettingsPatch = z.object({ allow_host_runners: z.boolean().optional() });
+  app.patch("/api/settings", async (req) => {
+    const patch = SettingsPatch.parse(req.body);
+    for (const [k, v] of Object.entries(patch)) if (v !== undefined) await store.setSetting(k, v);
+    return store.settings();
+  });
+
+  app.get<{ Params: { ws: string }; Querystring: { state?: string } }>("/api/workspaces/:ws/permissions", async (req) =>
+    store.permissions(req.params.ws, req.query.state ?? "pending"),
+  );
+  const PermissionDecision = z.object({ decision: z.enum(["allow", "deny"]), remember: z.boolean().optional(), reason: z.string().optional() });
+  app.post<{ Params: { id: string } }>("/api/permissions/:id/decide", async (req) => {
+    const d = PermissionDecision.parse(req.body);
+    return store.decidePermission(Number(req.params.id), d.decision === "allow", d.remember ?? false, d.reason?.trim() || null);
   });
 
   // Live updates: one SSE stream per console tab, filtered by workspace.

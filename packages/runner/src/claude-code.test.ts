@@ -8,6 +8,7 @@ import { billingModeFrom, ClaudeCodeEngine, PAY_PER_USE_ENV, subscriptionOnlyEnv
 const claim: RunClaim = {
   runId: 1, workspaceId: "dev", agentId: "vigil", threadId: "THR-0001", model: "haiku", effort: "low",
   routeReason: "test", sessionId: null, prompt: "hi", agentPrompt: "", allowedTools: [],
+  permissions: { allow: [], ask: [], deny: [] }, runnerMode: "container", repo: null,
 };
 
 /** A stand-in for the `claude` binary that prints the given stream-json lines. */

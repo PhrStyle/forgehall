@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { RunClaim, type RunEvent } from "@forgehall/shared";
+import { RunClaim, RunnerMode, type RunEvent } from "@forgehall/shared";
 import { billingModeFrom, ClaudeCodeEngine } from "./claude-code.js";
 import type { Engine } from "./engine.js";
 import { commitAndPush, prepareCheckout, type RepoCheckout } from "./workspace.js";
@@ -13,6 +13,8 @@ export interface RunnerConfig {
   agentToken: string;
   /** Root of the agent's work area; each thread gets its own directory under it. */
   workRoot: string;
+  /** Where this runner executes; the bus refuses `host` unless the user allows it. */
+  mode: RunnerMode;
   /** Environment passed to the engine (account credentials live here). */
   engineEnv: NodeJS.ProcessEnv;
 }
@@ -37,8 +39,15 @@ export class Runner {
     let backoff = 1000;
     while (!this.stopping) {
       try {
-        const res = await this.call("/runner/claim");
+        const res = await this.call("/runner/claim", { mode: this.cfg.mode });
         if (res.status === 204) { backoff = 1000; continue; }
+        if (res.status === 403) {
+          // Refused by policy (e.g. host runners disabled): retrying will not help.
+          console.error(`[runner] ${((await res.json().catch(() => ({}))) as { error?: string }).error ?? "refused by the bus"}`);
+          this.stopping = true;
+          process.exitCode = 1;
+          return;
+        }
         if (!res.ok) throw new Error(`claim: HTTP ${res.status} ${await res.text()}`);
         await this.execute(RunClaim.parse(await res.json()));
         backoff = 1000;
@@ -133,11 +142,13 @@ async function main() {
       busUrl: process.env.BUS_URL ?? "http://127.0.0.1:4545",
       agentToken: token,
       workRoot: process.env.WORK_ROOT ?? join(process.cwd(), ".work"),
+      // Isolated images set FORGEHALL_RUNNER_MODE; anything else is the host.
+      mode: RunnerMode.catch("host").parse(process.env.FORGEHALL_RUNNER_MODE ?? "host"),
       engineEnv: env,
     },
     new ClaudeCodeEngine(undefined, billing),
   );
-  console.log(`[runner] billing mode: ${billing}`);
+  console.log(`[runner] billing mode: ${billing} · runner mode: ${RunnerMode.catch("host").parse(process.env.FORGEHALL_RUNNER_MODE ?? "host")}`);
   process.on("SIGINT", () => runner.stop());
   process.on("SIGTERM", () => runner.stop());
   await runner.loop();

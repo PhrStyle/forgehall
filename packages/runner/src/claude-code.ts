@@ -64,7 +64,11 @@ export class ClaudeCodeEngine implements Engine {
       "--verbose",
       "--mcp-config", mcpConfigPath,
       "--strict-mcp-config",
-      "--permission-mode", "dontAsk",
+      // Allowed and denied tools are settled by Claude Code itself; anything else is asked to the
+      // user through the bus (permission requests in the console), never auto-approved.
+      "--permission-mode", "default",
+      "--permission-prompt-tool", "mcp__bus__permission",
+      "--settings", JSON.stringify({ permissions: { allow: claim.permissions.allow, ask: claim.permissions.ask, deny: claim.permissions.deny } }),
       "--allowedTools", ["mcp__bus__*", ...claim.allowedTools].join(","),
     ];
     if (claim.agentPrompt.trim()) args.push("--append-system-prompt", claim.agentPrompt);
@@ -87,6 +91,8 @@ export class ClaudeCodeEngine implements Engine {
   private spawnRun(r: EngineRun, mcpConfigPath: string): Promise<EngineResult> {
     return new Promise((resolve) => {
       const result: EngineResult = { ok: false, sessionId: r.claim.sessionId, inputTokens: 0, outputTokens: 0, costUsd: 0, error: null, rateLimit: null };
+      // A permission request can wait for the user for minutes; let the MCP call last that long.
+      r.env = { MCP_TOOL_TIMEOUT: String(20 * 60_000), ...r.env };
       const child = spawn(this.bin, this.args(r, mcpConfigPath), { cwd: r.cwd, env: this.billing === "subscription-only" ? subscriptionOnlyEnv(process.env, r.env) : { ...process.env, ...r.env }, stdio: ["pipe", "pipe", "pipe"], signal: r.signal });
       child.stdin.on("error", () => {}); // the engine may exit before reading everything
       child.stdin.end(r.claim.prompt);

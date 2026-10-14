@@ -19,7 +19,12 @@ async function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
 }
 
 /** Builds the bus MCP server for one authenticated agent. Every tool is scoped to its workspace. */
-export function busMcpServer(store: Store, me: AgentRow): McpServer {
+export interface McpOptions {
+  /** How long a permission request waits for the user before it is denied. */
+  permissionTimeoutMs: number;
+}
+
+export function busMcpServer(store: Store, me: AgentRow, opts: McpOptions = { permissionTimeoutMs: 15 * 60_000 }): McpServer {
   const server = new McpServer({ name: "bus", version: "0.1.0" });
   const ws = me.workspace_id;
   const recipient = z.string().describe(`id of an agent in this workspace, or "${HUMAN}" for the user`);
@@ -124,6 +129,23 @@ export function busMcpServer(store: Store, me: AgentRow): McpServer {
         const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "notify", from: me.id, to, body });
         return ok(`Notice sent to ${to} (message ${m.id}).`);
       }),
+  );
+
+  // Claude Code calls this (--permission-prompt-tool) for any tool use that is neither allowed nor denied.
+  server.registerTool(
+    "permission",
+    {
+      description: "Internal: asks the user to approve a tool use. Called by the runtime, not by agents.",
+      inputSchema: { tool_name: z.string(), input: z.any(), tool_use_id: z.string().optional() },
+    },
+    async ({ tool_name, input }) => {
+      const req = await store.createPermissionRequest(me, tool_name, input);
+      const done = await store.awaitPermission(req.id, opts.permissionTimeoutMs);
+      const decision = done.state === "allowed"
+        ? { behavior: "allow", updatedInput: input }
+        : { behavior: "deny", message: done.state === "expired" ? "The user did not answer in time. Do not retry this action; ask the user with ask(to=\"you\") if it is needed." : `The user denied this action.${done.reason ? ` Reason: ${done.reason}` : ""} Do not retry it.` };
+      return ok(JSON.stringify(decision));
+    },
   );
 
   server.registerTool(

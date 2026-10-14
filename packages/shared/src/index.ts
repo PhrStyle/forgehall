@@ -39,6 +39,11 @@ export type Effort = z.infer<typeof Effort>;
 export const Outcome = z.enum(["passed", "failed"]);
 export type Outcome = z.infer<typeof Outcome>;
 
+/** Where a runner executes. `container` and `vm` are isolated; `host` is refused unless the user allows it. */
+export const RunnerMode = z.enum(["container", "vm", "host"]);
+export type RunnerMode = z.infer<typeof RunnerMode>;
+export const isIsolated = (m: RunnerMode) => m !== "host";
+
 /** What the bus hands a runner when it claims a run. */
 export const RunClaim = z.object({
   runId: z.number(),
@@ -54,6 +59,12 @@ export const RunClaim = z.object({
   agentPrompt: z.string(),
   /** Engine tools allowed without asking, besides the bus tools. */
   allowedTools: z.array(z.string()),
+  /** Claude Code permission rules for this run; anything not allowed or denied is asked to the user. */
+  permissions: z
+    .object({ allow: z.array(z.string()), ask: z.array(z.string()), deny: z.array(z.string()) })
+    .default({ allow: [], ask: [], deny: [] }),
+  /** Where the runner executes: isolated in a container or VM, or directly on the host (opt-in only). */
+  runnerMode: RunnerMode.default("container"),
   /** Repository checkout for the run, or null for threads without a repo. */
   repo: z
     .object({ id: z.string(), base: z.string(), branch: z.string() })
