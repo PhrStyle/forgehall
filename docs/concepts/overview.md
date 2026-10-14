@@ -8,17 +8,16 @@ Legend: **[now]** is implemented, **[planned]** is not built yet.
 
 ```mermaid
 flowchart LR
-  you([You]) -->|fh CLI| bus
-  console[Console - planned] -.-> bus
-  subgraph host[Host]
+  you([You]) -->|"fh CLI, console<br/>admin token"| bus
+  subgraph stack[Docker stack]
     bus["Bus<br/>MCP + runner API<br/>router, queue"]
     db[(Postgres)]
     bus <--> db
   end
-  subgraph r1[Runner: vigil]
+  subgraph r1["Container fh-dev-vigil"]
     run1[runner] --> cc1[claude CLI]
   end
-  subgraph r2[Runner: atlas]
+  subgraph r2["Container fh-dev-atlas"]
     run2[runner] --> cc2[claude CLI]
   end
   run1 -- "claim run / events / finish" --> bus
@@ -27,11 +26,13 @@ flowchart LR
   cc2 -- "MCP tools: ask, answer..." --> bus
 ```
 
+The bus and Postgres run in the Docker stack. Each agent's runner runs in its own container on the `forgehall-agents` network and reaches the bus as `http://bus:4545`. You reach the bus on `127.0.0.1:4545`. Details: [Isolation and permissions](isolation-and-permissions.md).
+
 ## The five pieces
 
-1. **Bus [now]**. The single source of truth. It stores workspaces, agents, threads, messages, runs and run events in Postgres. It exposes MCP tools to agents, a small HTTP API to runners, the console API, and git smart HTTP for the staging remotes of registered repositories. See [MCP tools](../reference/mcp-tools.md), [Runner API](../reference/runner-api.md) and [Console API](../reference/console-api.md).
+1. **Bus [now]**. The single source of truth. It stores workspaces, agents, threads, messages, runs and run events in Postgres. It exposes MCP tools to agents, a small HTTP API to runners, the console API (which needs the admin token), and git smart HTTP for the staging remotes of registered repositories. See [MCP tools](../reference/mcp-tools.md), [Runner API](../reference/runner-api.md) and [Console API](../reference/console-api.md).
 2. **Dispatcher [now, inside the bus]**. Turns messages into runs, chooses model and effort with the [router](model-routing-and-limits.md), and applies queue priority and concurrency. Today the concurrency cap is per workspace (`MAX_RUNNING`).
-3. **Runner [now]**. A daemon, one per agent. It claims a run, executes the engine in a per-thread directory (for repository threads, a checkout of the thread branch; the runner commits and pushes afterwards, agents never run git), forwards the event stream, and reports session id, tokens, cost and usage when the run ends. Phase 1 runs on the host; a Docker image is the remaining phase 1 item.
+3. **Runner [now]**. A daemon, one per agent. It claims a run, executes the engine in a per-thread directory (for repository threads, a checkout of the thread branch; the runner commits and pushes afterwards, agents never run git), forwards the event stream, and reports session id, tokens, cost and usage when the run ends. It runs isolated by default, in one container per agent (`fh agent run`); a runner on the host is refused unless you allow it. Tool uses that no rule covers become permission requests you answer in the console.
 4. **Claude Code CLI [now]**. The engine. Forgehall does not implement an agent loop. See [ADR 0001](../adr/0001-claude-code-cli-as-engine.md).
 5. **Console [now]**. A web UI over the bus for threads, branches and diffs, approvals and activity (`packages/console`). The `fh` CLI covers the same operations except deciding approvals.
 
@@ -71,5 +72,6 @@ runner  POST /runner/runs/:id/finish  -> ok, session id, tokens, cost, rate limi
 
 ## Next
 
+- [Isolation and permissions](isolation-and-permissions.md)
 - [Workspaces](workspaces.md)
 - [Threads and messages](threads-and-messages.md)

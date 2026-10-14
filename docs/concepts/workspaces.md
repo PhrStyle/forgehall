@@ -13,7 +13,9 @@ Legend: **[now]** implemented, **[planned]** not built yet.
 - Recipients are resolved inside the workspace; you cannot message an agent in another one.
 - Usage is stored per workspace.
 
-**[planned]** Isolation of everything around the bus: separate containers or VMs per agent, git credentials per workspace, memory and skills in a separate local git repository per workspace, and the workspace's share of the account's weekly limit. See [ADR 0004](../adr/0004-workspace-isolation.md).
+**[now]** Each agent runs in its own container (`fh agent run`), see [Isolation and permissions](isolation-and-permissions.md).
+
+**[planned]** Isolation of everything around the bus: VMs per agent, git credentials per workspace, memory and skills in a separate local git repository per workspace, and the workspace's share of the account's weekly limit. See [ADR 0004](../adr/0004-workspace-isolation.md).
 
 ## Agents
 
@@ -82,7 +84,7 @@ Reviewers are chosen at approval time (rather than fixed in config) because who 
 
 Watch out for one thing: an `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`, or the Bedrock, Vertex and Foundry switches) in the runner's environment takes precedence over the subscription login, and those runs are billed per token.
 
-To make that impossible on your machine, run the runner with `FORGEHALL_BILLING=subscription-only`:
+To make that impossible on your machine, run the runner with `FORGEHALL_BILLING=subscription-only` (`fh agent run` passes it to the container when it is set in your shell):
 
 - The runner removes those variables from the engine's environment.
 - If the engine still starts with a non-subscription credential (`apiKeySource` other than `none`) or reports paid overage (`isUsingOverage`), the run stops at once and the thread is blocked with a `subscription-only` explanation.
@@ -93,7 +95,7 @@ Dollar figures in the console and run records (`cost_usd`) are Claude Code's est
 
 **[planned]** Each workspace declares which Claude account(s) it uses (for example a Team seat at work, a personal subscription at home). The runner injects the right credential (`CLAUDE_CODE_OAUTH_TOKEN`) into each run and each agent keeps its own Claude config directory, so switching accounts does not lose sessions.
 
-**[now]** One credential per runner: set `CLAUDE_CODE_OAUTH_TOKEN` for the runner, or rely on the CLI's own login. Usage is read per workspace.
+**[now]** One credential per runner: `fh agent run` passes the token from `claude setup-token` (`~/.config/forgehall/claude-token` or `CLAUDE_CODE_OAUTH_TOKEN`) to the container. Only the opt-in host runner can rely on the CLI's own login. Usage is read per workspace.
 
 Planned switching modes:
 

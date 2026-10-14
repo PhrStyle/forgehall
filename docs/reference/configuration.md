@@ -4,34 +4,65 @@
 
 There are no config files yet. Everything is read from the environment.
 
-### Bus (`packages/bus/dist/index.js`) and CLI
+### Bus (`packages/bus/dist/index.js`, runs in the stack) and `fh`
+
+In the stack the bus is the `bus` service of `infra/docker/compose.yaml`; the image sets `HOST=0.0.0.0`, `PORT=4545` and `FORGEHALL_HOME=/data`. Compose publishes the port on `127.0.0.1` only.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DATABASE_URL` | `postgres://forgehall:forgehall_dev@127.0.0.1:5433/forgehall` | Postgres connection. Also used by `fh`. The default matches `infra/docker/compose.yaml`; the password is for local development only |
+| `DATABASE_URL` | `postgres://forgehall:forgehall_dev@127.0.0.1:5433/forgehall` | Postgres connection. Also used by `fh` from the host. In the stack, compose points the bus at `postgres:5432`. The password is for local development only |
 | `PORT` | `4545` | HTTP port |
-| `HOST` | `127.0.0.1` | Bind address. Loopback by default because tokens travel over plain HTTP with no TLS |
+| `HOST` | `127.0.0.1` (`0.0.0.0` in the bus image) | Bind address. Plain HTTP with no TLS: in the stack the port is published on the host's loopback only, and agents reach it on the `forgehall-agents` network |
 | `LOG_LEVEL` | `info` | Fastify logger level |
 | `MAX_RUNNING` | `2` | Maximum runs in progress per workspace |
 | `CLAIM_WAIT_MS` | `25000` | How long a runner's claim request waits for work before returning 204 |
-| `FORGEHALL_HOME` | `~/.forgehall` | Data directory. The bus and `fh` keep staging remotes under `$FORGEHALL_HOME/staging/<workspace>/<repo>.git`. Both must see the same value, and the bus needs `git` installed |
+| `PERMISSION_TIMEOUT_MS` | `900000` (15 minutes) | How long a permission request waits for you before it counts as denied |
+| `RUN_STALE_SECONDS` | `300` | A running run with no heartbeat for this long is failed and its messages re-queued |
+| `FORGEHALL_HOME` | `~/.forgehall` on the host, `/data` in the stack | Data directory: staging remotes (`staging/<workspace>/<repo>.git`), local upstreams (`upstreams/`) and the `admin-token` file. In the stack the host's `~/.forgehall` is mounted at `/data` |
+| `FORGEHALL_ADMIN_TOKEN` | unset | Use this admin token instead of reading or creating `$FORGEHALL_HOME/admin-token`. Read by the bus, `fh` and the console's dev server |
+| `FORGEHALL_BUS_URL` | `http://127.0.0.1:4545` | Where **`fh`** (`fh repo add`) and the console's dev server reach the bus |
+| `FORGEHALL_RUNNER_IMAGE` | `forgehall/runner:dev` | Image `fh agent run` starts |
+| `FORGEHALL_CLAUDE_TOKEN_FILE` | `~/.config/forgehall/claude-token` | File with the Claude token (`claude setup-token`) that `fh agent run` passes to containers. `CLAUDE_CODE_OAUTH_TOKEN` in the environment takes precedence |
+| `FORGEHALL_AGENT_NETWORK` | `forgehall-agents` | Docker network of the stack that agents join |
+| `FORGEHALL_AGENT_BUS_URL` | `http://bus:4545` | Bus URL given to agent containers |
 
-The bus applies pending migrations at startup.
+The bus applies pending migrations at startup. The admin token is created on first start (or by `fh setup`) as `fha_...`, mode `0600`.
 
-The approval policy is a workspace setting (column `approval_policy`, default `merge`) with no `fh` option to change it yet; only `merge` is implemented.
+`FORGEHALL_HOME` on the host and `/data` in the bus container are the same directory. `fh` asks the bus for its home (`GET /health`) to translate paths; see [`fh repo add`](cli.md#fh-repo-add-ws-id-upstream---base-branch).
 
-### Runner (`packages/runner/dist/index.js`)
+The approval policy is a workspace setting (column `approval_policy`, default `merge`) with no `fh` option to change it yet; only `merge` is implemented. The machine-wide setting `allow_host_runners` (default off) is changed in the console's Settings or with `PATCH /api/settings` ([console API](console-api.md#settings)).
+
+### `infra/docker/.env` (written by `fh setup`)
+
+Read by `compose.yaml`. Do not commit it; it is machine-specific.
+
+| Variable | Meaning |
+|---|---|
+| `FORGEHALL_HOME_HOST` | Absolute path of `~/.forgehall` on the host, mounted at `/data` in the bus. Compose refuses to start without it |
+| `FORGEHALL_UID`, `FORGEHALL_GID` | User the bus container runs as. `0:0` with rootless Docker (it maps to your user), otherwise your uid and gid. Defaults to `1000:1000` |
+
+### Runner (in the runner image; `packages/runner/dist/index.js`)
+
+`fh agent run` sets these for you. They matter if you run the image yourself or use the opt-in host mode.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENT_TOKEN` | none, required | The agent's bearer token (`fh agent token <ws> <id>`). One runner serves one agent |
-| `BUS_URL` | `http://127.0.0.1:4545` | Where the bus listens |
-| `WORK_ROOT` | `./.work` (under the current directory) | Root of the agent's work area; each thread gets `WORK_ROOT/<thread-id>/` as the engine's working directory |
+| `AGENT_TOKEN` | none, required | The agent's bearer token. One runner serves one agent |
+| `BUS_URL` | `http://127.0.0.1:4545` (`http://bus:4545` in the image) | Where the bus listens |
+| `FORGEHALL_RUNNER_MODE` | `host` (`container` in the image) | Where the runner says it executes: `container`, `vm` or `host`. Reported on every claim. The bus refuses `host` unless "Allow agents directly on this machine" is on. Self-reported: do not set it to `container` outside a container |
+| `WORK_ROOT` | `./.work` (`/home/agent/work` in the image) | Root of the agent's work area; each thread gets `WORK_ROOT/<thread-id>/` as the engine's working directory |
 | `CLAUDE_BIN` | `claude` | Claude Code executable |
-| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Passed to the CLI to select the account. If unset, the CLI uses its own login. Create one with `claude setup-token` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | unset | Passed to the CLI to select the account. `fh agent run` sets it from your token file. On the host, if unset, the CLI uses its own login |
 | `FORGEHALL_BILLING` | `any` | `any`: use whatever authentication Claude Code is given. `subscription-only`: strip API-key variables and stop any run that is not on a subscription login or that uses paid overage. See [Billing](../concepts/workspaces.md#billing) |
 
-The runner's whole environment is inherited by the `claude` process.
+The runner exits with an explanation when the bus answers `403` to its claim. Its environment is inherited by the `claude` process, which also gets `MCP_TOOL_TIMEOUT` of 20 minutes so a call waiting for your permission answer can last.
+
+### Console dev and preview server (`packages/console`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `FORGEHALL_BUS_URL` | `http://127.0.0.1:4545` | Bus to proxy `/api` to |
+| `FORGEHALL_ADMIN_TOKEN` | contents of `$FORGEHALL_HOME/admin-token` | Added by the server as the `Authorization` header of proxied requests. Never in the browser bundle |
 
 ## Planned configuration
 
@@ -39,7 +70,7 @@ None of the following is read by any code today. It shows the intended shape.
 
 ### More under `FORGEHALL_HOME` (planned)
 
-Today `FORGEHALL_HOME` only holds `staging/`. The planned per-workspace data repositories live here too. See [Learning and data](../concepts/learning-and-data.md).
+Today `FORGEHALL_HOME` holds `staging/`, `upstreams/` and `admin-token`. The planned per-workspace data repositories live here too. See [Learning and data](../concepts/learning-and-data.md).
 
 ### `config.yaml` (planned)
 

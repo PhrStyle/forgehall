@@ -11,7 +11,7 @@ Forgehall is built in phases. Each phase ends with something you can run.
 | **F5** VMs | Incus, network allowlist, snapshots | The F2 tests pass with agents in VMs |
 | **F6** Extras | Notifications, more agents (research, writing, data) | n/a |
 
-Isolation technology: Docker (one container per agent, via compose) for F1 to F4, then Incus VMs (separate kernel, native snapshots, per-instance network ACL) in F5. The same base image serves both: Node 22, a pinned `claude`, git and the runner.
+Isolation technology: Docker (one container per agent, started with `fh agent run`; the bus runs in the compose stack) for F1 to F4, then Incus VMs (separate kernel, native snapshots, per-instance network ACL) in F5. The same base image serves both: Node 22, a pinned `claude`, git and the runner.
 
 ## Phase 1 status
 
@@ -45,10 +45,14 @@ Done:
 - Branch per thread (`fh/<THREAD-ID>`); the runner checks out, commits and pushes, agents never run git; one run per thread at a time
 - Approvals as records pinned to a commit; the `merge` policy: approving merges into the base branch without a working tree, refuses conflicts and a moved branch, publishes upstream and closes the thread
 - Console: branch card, diff viewer, approval card, repository selection in New task
+- Isolated agents by default: runners report a mode and the bus refuses `host` runners unless you allow them; `fh agent run`, `stop` and `ps` manage one container per agent; the bus runs in the Docker stack
+- Admin token on the whole console API (`/api`); `fh setup` prepares `~/.forgehall` and the stack settings
+- Tool permissions: default rules for isolated runners, and permission requests answered in the console (allow once, always allow, deny), expiring after 15 minutes. Validated with a real run: a denied `rm` was respected
 - Verified end to end: an agent fixed a bug in a sample repository and the approved merge reached the upstream; a push to `main` with an agent token is rejected
 
 Remaining:
 
+- Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
 - `pull_request` and `branch_only` policies with real providers (GitHub, Azure DevOps), which belong to F3
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools

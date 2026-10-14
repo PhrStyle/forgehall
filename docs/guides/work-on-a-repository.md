@@ -4,14 +4,14 @@ You will register a sample git repository with a bug, ask an agent to fix it on 
 
 Status: **implemented (phase 2)**, `local` provider and `merge` approval policy only. Pull requests on GitHub or Azure DevOps are planned.
 
-Prerequisites: the setup from [Getting started](../getting-started.md) (bus, runner for `atlas`, console) and `git` installed. Agents need the default file tools; they do not run git.
+Prerequisites: the setup from [Getting started](../getting-started.md) (stack running, `atlas` started with `fh agent run dev atlas`, console) and `git` installed. Agents use file tools and the allowed test and build commands; they do not run git.
 
 ## 1. Create a sample upstream
 
-A bare repository stands in for your real remote. Any URL or path that `git push` accepts works as an upstream.
+A bare repository stands in for your real remote. The bus runs in a container and sees only `~/.forgehall`, so a local upstream must live under `~/.forgehall/upstreams`. A git URL works too.
 
 ```bash
-mkdir -p /tmp/fh-demo && cd /tmp/fh-demo
+mkdir -p ~/.forgehall/upstreams && cd ~/.forgehall/upstreams
 git init -q --bare -b main checkout-app.git
 git clone -q checkout-app.git seed && cd seed
 cat > total.js <<'JS'
@@ -29,13 +29,13 @@ git add -A && git commit -qm "Add total()" && git push -q origin HEAD:main
 From the Forgehall checkout:
 
 ```bash
-fh repo add dev checkout-app /tmp/fh-demo/checkout-app.git --base main
-# repo dev/checkout-app ok · upstream /tmp/fh-demo/checkout-app.git · base main · staging ready
+fh repo add dev checkout-app ~/.forgehall/upstreams/checkout-app.git --base main
+# repo dev/checkout-app ok · upstream /data/upstreams/checkout-app.git · base main · staging ready
 fh repos dev
-# checkout-app  local  main  /tmp/fh-demo/checkout-app.git
+# checkout-app  local  main  /data/upstreams/checkout-app.git
 ```
 
-This created the staging remote at `~/.forgehall/staging/dev/checkout-app.git` (or under `$FORGEHALL_HOME`). Agents push there, never to your upstream. The bus must be able to read this path, so run `fh` and the bus with the same `FORGEHALL_HOME`.
+The upstream is stored as the path the bus sees (`/data/upstreams/...`). `fh repo add` goes through the bus API, because the bus owns the staging remotes. It translates the host path to the bus's `/data` mount, and refuses a local path outside `~/.forgehall` with an explanation (use a git URL instead). The staging remote is created at `~/.forgehall/staging/dev/checkout-app.git` on your machine (`/data/staging/...` in the bus container). Agents push there, never to your upstream.
 
 ## 3. Ask atlas to fix the bug
 
@@ -49,14 +49,15 @@ fh send dev atlas "total() in total.js rounds down; it should round to the neare
 
 Or in the console: **New task**, pick `atlas`, choose the repository `checkout-app` in the **Repository** field, and send.
 
-The thread gets its own branch, `fh/THR-0001`. When atlas starts, the runner checks that branch out in `WORK_ROOT/THR-0001/` and atlas edits files there with its file tools. When the run ends successfully, the runner commits the change and pushes it to the staging remote; you will see a `git.push` event in the run's activity.
+The thread gets its own branch, `fh/THR-0001`. When atlas starts, the runner checks that branch out in `/home/agent/work/THR-0001/` inside atlas's container and atlas edits files there with its file tools. When the run ends successfully, the runner commits the change and pushes it to the staging remote; you will see a `git.push` event in the run's activity.
 
 ## 4. Watch the branch and the diff
 
 Open the thread in the console. The **branch card** shows `fh/THR-0001` against `main`, with commits and changed files, and the **diff viewer** shows the patch. The same data is available as JSON:
 
 ```bash
-curl -s http://127.0.0.1:4545/api/threads/THR-0001/diff | head -c 600
+curl -s -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)" \
+  http://127.0.0.1:4545/api/threads/THR-0001/diff | head -c 600
 ```
 
 You can also inspect the branch in git: `git -C ~/.forgehall/staging/dev/checkout-app.git log main..fh/THR-0001 --stat`.
@@ -73,7 +74,7 @@ When atlas calls `request_approval`, the thread moves to `awaiting_approval` and
 ## 6. Check the upstream
 
 ```bash
-git -C /tmp/fh-demo/checkout-app.git log --oneline --graph main
+git -C ~/.forgehall/upstreams/checkout-app.git log --oneline --graph main
 # *   3f9c2ab Merge fh/THR-0001: Coupon rounding
 # |\
 # | * 81d04e7 atlas: THR-0001 (run 1)
@@ -93,7 +94,9 @@ The merge commit is authored by `Forgehall <forgehall@localhost>`; atlas's commi
 
 **"The agent is still pushing its changes".** Atlas requested approval during its run and the push has not finished. Try again in a moment; the commit is pinned when the run ends.
 
-**Run failed on checkout or push.** The run shows `checkout of fh/THR-0001 failed` or `pushing fh/THR-0001 failed`, and the usual retry rules apply. Check that the staging path exists and that the agent's token is current (`fh agent token` invalidates the old one).
+**Run failed on checkout or push.** The run shows `checkout of fh/THR-0001 failed` or `pushing fh/THR-0001 failed`, and the usual retry rules apply. Check the agent's logs (`docker logs fh-dev-atlas`). `fh agent token` invalidates the token a running container holds; run `fh agent run dev atlas` to restart it with a fresh one.
+
+**Atlas pauses on a tool.** If atlas wants a command that no rule covers (an `npm install`, say), the run waits for you: answer the card in **Waiting on you**. Without an answer it is denied after 15 minutes.
 
 **A message to a busy thread does nothing yet.** Only one run per thread runs at a time; the next one starts when the current one ends.
 

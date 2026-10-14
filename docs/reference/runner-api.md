@@ -2,9 +2,9 @@
 
 HTTP endpoints served by the bus (`packages/bus/src/http.ts`). Status: **implemented (phase 1)**. The runner is the main client, but nothing stops you from calling them with `curl` while experimenting. The API is internal and may change before 1.0.
 
-Base URL: `http://127.0.0.1:4545` by default (see [configuration](configuration.md)). There is no TLS; keep the bus on loopback or behind your own secure transport.
+Base URL: `http://127.0.0.1:4545` from the host, and `http://bus:4545` from an agent container on the `forgehall-agents` network (see [configuration](configuration.md)). There is no TLS; the stack publishes the port on loopback only.
 
-**Authentication.** Every endpoint except `/health` needs `Authorization: Bearer <agent token>`. The token identifies the agent and its workspace; missing or unknown tokens get `401 {"error": "invalid agent token"}`. A run can only be touched by the agent it was queued for.
+**Authentication.** Every endpoint here except `/health` needs `Authorization: Bearer <agent token>`. The token identifies the agent and its workspace; missing or unknown tokens get `401 {"error": "invalid agent token"}`. A run can only be touched by the agent it was queued for.
 
 **Errors.** Bus rule violations return `409 {"error": "..."}`, invalid payloads `400 {"error": "invalid payload", "issues": [...]}`, anything else `500`.
 
@@ -12,7 +12,7 @@ Payload shapes are the zod schemas in `packages/shared/src/index.ts`.
 
 ## `GET /health`
 
-No auth. Returns `{"ok": true}`.
+No auth. Returns `{"ok": true, "home": "/data"}`. `home` is the bus's data directory. The console API (`/api/...`) is separate and needs the admin token, which agents never have: see the [console API](console-api.md#authentication).
 
 ## `POST /mcp`
 
@@ -20,7 +20,15 @@ The agent-facing MCP endpoint (Streamable HTTP, stateless: one server per reques
 
 ## `POST /runner/claim`
 
-Long-poll for the next run for the authenticated agent. Body is ignored (send `{}`).
+Long-poll for the next run for the authenticated agent. The body says where the runner executes:
+
+```json
+{"mode": "container"}
+```
+
+`mode` is `container`, `vm` (planned) or `host`; a missing or unknown value counts as `host`. It is **self-reported** by the runner. The runner image sets it through `FORGEHALL_RUNNER_MODE=container`. The mode is stored on the run and decides the permission rules in the claim.
+
+**`403`**: the mode is `host` and "Allow agents directly on this machine" (`allow_host_runners`) is off. The body explains it, for example `{"error": "Agents running directly on this machine are disabled. Start the agent isolated (fh agent run <ws> <agent>), ..."}`. Retrying will not help, so the runner prints the error and exits.
 
 The bus checks for work every second for up to `CLAIM_WAIT_MS`. It returns `204 No Content` when nothing is claimable: no queued run, the agent already has a run in progress, or the workspace is at `MAX_RUNNING`. Otherwise `200` with a `RunClaim`, and the run is marked `running`; every undelivered message for that agent and thread is marked as delivered in it.
 
@@ -36,7 +44,9 @@ The bus checks for work every second for up to `CLAIM_WAIT_MS`. It returns `204 
   "sessionId": "5d1c0f6e-0000-0000-0000-000000000000",
   "prompt": "[forgehall] workspace dev · thread THR-0001 ...",
   "agentPrompt": "",
-  "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write"]
+  "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(ls *)", "..."],
+  "permissions": {"allow": ["Read", "..."], "ask": ["Bash(npm install *)", "..."], "deny": ["Bash(sudo *)", "..."]},
+  "runnerMode": "container"
 }
 ```
 
@@ -47,7 +57,9 @@ The bus checks for work every second for up to `CLAIM_WAIT_MS`. It returns `204 
 | `sessionId` | string \| null | Claude session to `--resume`; null on the agent's first run in the thread |
 | `prompt` | string | Bus header plus the new messages |
 | `agentPrompt` | string | Agent identity, appended to the system prompt |
-| `allowedTools` | string[] | Engine tools allowed without asking, in addition to `mcp__bus__*` |
+| `allowedTools` | string[] | Engine tools allowed without asking, in addition to `mcp__bus__*`. Same as `permissions.allow` |
+| `permissions` | `{allow, ask, deny}` | Tool rules in Claude Code syntax for this run, from the mode's defaults plus the agent's additions. For `host` runs `allow` is empty. The runner passes them to Claude Code with `--settings`; see [Isolation and permissions](../concepts/isolation-and-permissions.md#tool-permissions) |
+| `runnerMode` | `container` \| `vm` \| `host` | The mode the claim was made with |
 
 ## `POST /runner/runs/:id/events`
 

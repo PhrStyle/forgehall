@@ -4,9 +4,25 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-Phase 1 (bus, runner, CLI) and phase 2 so far (repositories and approvals).
+Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolation and permissions).
+
+### Changed
+
+- **Agents run isolated by default.** Runners report a mode (`container`, `vm`, `host`) in `POST /runner/claim`; the bus answers `403` to `host` runners and the runner exits with an explanation, unless the setting `allow_host_runners` is on (console Settings, "Allow agents directly on this machine"). Host runs get no standing permissions and every tool use is asked. The mode is self-reported.
+- **The bus runs in the Docker stack** (`infra/docker/compose.yaml`), published on `127.0.0.1:4545` only and reachable by agents as `http://bus:4545` on the `forgehall-agents` network; it mounts `~/.forgehall` at `/data`. `FORGEHALL_HOME` is `/data` there.
+- **The console API requires an admin token** (`Authorization: Bearer <~/.forgehall/admin-token>`) on everything under `/api`; without it, `401`. The console dev and preview server adds it when proxying. Breaking for scripts that called `/api` without it.
+- `fh repo add` goes through the bus API; local upstreams must live under `~/.forgehall`. `GET /health` returns `home`.
+- Runs use `--permission-mode default` and the default tool rules for the runner mode instead of file tools only. The default allowed tools now include test, build and inspect commands; see [Isolation and permissions](docs/concepts/isolation-and-permissions.md).
+- `docs/guides/run-agents-in-docker.md` and the Quickstart now start from the stack and `fh agent run`; the manual host runner is documented only as an opt-in.
 
 ### Added
+
+- `fh setup`: creates `~/.forgehall` (admin token, `upstreams/`), detects rootless Docker and writes `infra/docker/.env`.
+- `fh agent run <ws> <id> [--isolation docker]`, `fh agent stop` and `fh agent ps`: one container per agent (`fh-<ws>-<id>`) from the `forgehall/runner:dev` image, with a work volume and `--restart unless-stopped`. `--isolation vm` is planned and refused.
+- Tool permissions: default rules for isolated runners (allow, ask, deny) in Claude Code syntax, per-agent additions, and **permission requests**. Claude Code calls the internal `permission` MCP tool (`--permission-prompt-tool`); the console shows a card (Allow once, Always allow, Deny with a reason) in Waiting on you, the thread and the agent page. Unanswered requests expire after 15 minutes (`PERMISSION_TIMEOUT_MS`) and count as denied.
+- Console API: `GET /api/settings`, `PATCH /api/settings`, `GET /api/workspaces/:ws/permissions`, `POST /api/permissions/:id/decide`, `POST /api/workspaces/:ws/repos`; SSE `permission` events.
+- Environment variables: `FORGEHALL_RUNNER_MODE`, `FORGEHALL_CLAUDE_TOKEN_FILE`, `FORGEHALL_RUNNER_IMAGE`, `FORGEHALL_AGENT_NETWORK`, `FORGEHALL_AGENT_BUS_URL`, `FORGEHALL_BUS_URL`, `FORGEHALL_ADMIN_TOKEN`, `PERMISSION_TIMEOUT_MS`; `infra/docker/.env` with `FORGEHALL_HOME_HOST`, `FORGEHALL_UID`, `FORGEHALL_GID`.
+- Docs: [Isolation and permissions](docs/concepts/isolation-and-permissions.md), [ADR 0008](docs/adr/0008-isolated-agents-and-permission-requests.md), decision log entries, and updated reference pages and SECURITY.md.
 
 - Runner presence: the bus records when each agent's runner polls; the console shows **Runner offline** and a banner with the start command when work is queued for an agent without a runner.
 - Repositories: `fh repo add <ws> <id> <upstream> [--base main]` and `fh repos <ws>`; provider `local`. Each repo gets a staging remote (bare repository under `$FORGEHALL_HOME/staging/<ws>/<id>.git`) with a `pre-receive` hook that accepts only `refs/heads/fh/*` and no deletions. `FORGEHALL_HOME` is now read by the bus and `fh`.

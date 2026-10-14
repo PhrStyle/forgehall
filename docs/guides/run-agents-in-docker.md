@@ -1,62 +1,67 @@
 # Run agents in Docker
 
-Run each agent's runner in its own container instead of on your host. The container has the official Claude Code CLI (pinned version), git and the runner, and runs as a non-root user.
+Agents run isolated by default: one container per agent, started with `fh agent run`. The container has the official Claude Code CLI (pinned version), git and the runner, and runs as a non-root user. Background and limits: [Isolation and permissions](../concepts/isolation-and-permissions.md).
 
-## 1. Create a Claude token (once)
+Prerequisites: the stack is running (`fh setup`, then `docker compose -f infra/docker/compose.yaml -p forgehall up -d --build`), as in [Getting started](../getting-started.md), and the agent exists (`fh agent add`).
 
-Containers cannot use your interactive login. Generate a long-lived token for your own subscription:
+## 1. Build the runner image (once)
 
-```bash
-claude setup-token
-```
-
-It prints a token valid for one year. Keep it out of shell history and out of the repository, for example in a file only you can read:
-
-```bash
-install -m 600 /dev/null ~/.config/forgehall/claude-token
-$EDITOR ~/.config/forgehall/claude-token
-```
-
-## 2. Build the images
-
-From the repository root:
+From the repository root. Rebuild it after changes to the runner or when you change the pinned Claude Code version:
 
 ```bash
 docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
 ```
 
-## 3. Start Postgres and the bus
+## 2. Create a Claude token (once)
 
-Either run the bus on the host as in [Getting started](../getting-started.md), or in a container:
-
-```bash
-docker compose -f infra/docker/compose.yaml -p forgehall --profile stack up -d --build
-```
-
-The containerized bus listens on `127.0.0.1:4545` on the host and on `http://bus:4545` inside the `forgehall_default` network.
-
-## 4. Start one runner per agent
+Containers cannot use your interactive login. Generate a long-lived token for your own subscription and keep it in a file only you can read:
 
 ```bash
-docker run -d --name fh-runner-vigil --network forgehall_default \
-  -e AGENT_TOKEN="$(fh agent token dev vigil)" \
-  -e CLAUDE_CODE_OAUTH_TOKEN="$(cat ~/.config/forgehall/claude-token)" \
-  forgehall/runner:dev
+claude setup-token
+install -D -m 600 /dev/null ~/.config/forgehall/claude-token
+$EDITOR ~/.config/forgehall/claude-token
 ```
 
-Repeat for each agent. Add `-e FORGEHALL_BILLING=subscription-only` if the runner must never bill per token (see [Billing](../concepts/workspaces.md#billing)). If the bus runs on the host instead, bind it to an address the container can reach and pass `-e BUS_URL=...`.
+`fh agent run` reads `~/.config/forgehall/claude-token` (or the path in `FORGEHALL_CLAUDE_TOKEN_FILE`), or `CLAUDE_CODE_OAUTH_TOKEN` if it is set. The token is valid for a year.
 
-## 5. Check
+## 3. Start, inspect and stop agents
 
 ```bash
-docker logs -f fh-runner-vigil
-fh runs dev
+fh agent run dev atlas
+# dev/atlas running isolated (docker, 5a7e1c0e91b2). Logs: docker logs -f fh-dev-atlas
+fh agent ps
+docker logs -f fh-dev-atlas
+fh agent stop dev atlas
+# dev/atlas stopped
 ```
+
+`fh agent run` creates the container `fh-dev-atlas` on the `forgehall-agents` network, with a work volume (`fh-dev-atlas-work`), the restart policy `unless-stopped`, and the agent token and Claude token passed as environment variables. It issues a new agent token each time, so running it again restarts the agent with a fresh one. If `FORGEHALL_BILLING` is set in your shell it is passed through (for example `subscription-only`; see [Billing](../concepts/workspaces.md#billing)).
+
+`--isolation vm` is **planned** (phase 5, Incus) and currently refused.
+
+## 4. Answer permission requests
+
+An agent that wants to use a tool no rule covers pauses and asks. Open the console, find the card in **Waiting on you** and choose **Allow once**, **Always allow** or **Deny**. Unanswered requests are denied after 15 minutes. See [Tool permissions](../concepts/isolation-and-permissions.md#tool-permissions).
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Thread becomes `blocked` with "Not logged in" | No or invalid `CLAUDE_CODE_OAUTH_TOKEN` | Create a token (step 1) and restart the container. Then reply in the thread to retry. |
-| Runner logs `claim: fetch failed` | The container cannot reach the bus | Use the `forgehall_default` network and `BUS_URL=http://bus:4545` |
-| A run fails with "runner stopped responding" | The container stopped mid-run | Restart it; the messages were put back in the queue |
+| `Runner image forgehall/runner:dev not found` | The image is not built | Step 1 |
+| `The forgehall-agents network does not exist` | The stack is not running | `docker compose -f infra/docker/compose.yaml -p forgehall up -d --build` |
+| `No Claude token for isolated agents` | No token file and no `CLAUDE_CODE_OAUTH_TOKEN` | Step 2 |
+| Thread becomes `blocked` with "Not logged in" | Invalid or expired Claude token | Create a new token, run `fh agent run` again, then reply in the thread to retry |
+| Runner logs `claim: fetch failed` | The container cannot reach the bus | Check that the stack is up and the agent is on `forgehall-agents` (`docker inspect fh-dev-atlas`) |
+| Runner logs that agents directly on this machine are disabled | A runner reported mode `host` | Start it with `fh agent run`. Only enable "Allow agents directly on this machine" in Settings if you accept that every tool use is then asked |
+| A run fails with "runner stopped responding" | The container stopped mid-run | Restart it with `fh agent run`; the messages were put back in the queue |
+| Image or bus changes not picked up | Old image or container | Rebuild the runner image and `fh agent run` again; for the bus, `docker compose ... up -d --build` |
+
+## Running a runner on the host (opt-in, not recommended)
+
+Possible only after you turn on **Settings, "Allow agents directly on this machine"**. The runner then has your user's reach and every tool use that is not denied is asked, with no standing permissions:
+
+```bash
+BUS_URL=http://127.0.0.1:4545 AGENT_TOKEN=$(fh agent token dev atlas) node packages/runner/dist/index.js
+```
+
+Without the setting, the bus answers `403` and the runner exits with an explanation.

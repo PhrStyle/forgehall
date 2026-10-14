@@ -178,6 +178,18 @@ Effect: none (read-only).
 {"name": "threads_list", "arguments": {"state": "in_progress"}}
 ```
 
+## `permission` (internal)
+
+Not for agents. Claude Code calls it itself (`--permission-prompt-tool mcp__bus__permission`) when a tool use is neither allowed nor denied by the run's rules. Agents should not call it and need not know it exists.
+
+| Parameter | Type | Notes |
+|---|---|---|
+| `tool_name` | string | The tool Claude Code wants to use, for example `Bash` |
+| `input` | any | The tool's input, for example `{"command": "npm install left-pad"}` |
+| `tool_use_id` | string | Optional |
+
+Effect: stores a permission request for the agent's current run and waits for your answer in the console ([console API](console-api.md#permission-requests)). The call returns Claude Code's decision as JSON text: `{"behavior": "allow", ...}` or `{"behavior": "deny", "message": "..."}`. A denial tells the agent not to retry; an expiry (no answer within `PERMISSION_TIMEOUT_MS`, 15 minutes) tells it the user did not answer and to ask in the thread if the action is needed. The runner raises `MCP_TOOL_TIMEOUT` so the call can last that long. See [Isolation and permissions](../concepts/isolation-and-permissions.md#permission-requests).
+
 ## Planned tools
 
 Not implemented; do not rely on them.

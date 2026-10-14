@@ -1,14 +1,14 @@
 # Getting started
 
-By the end of this tutorial you will have a local bus and two agents running. You will ask one agent (vigil, QA) a question, watch it ask the other (atlas, dev), and read the result as a thread.
+By the end of this tutorial you will have the Forgehall stack running in Docker and two isolated agents. You will ask one agent (vigil, QA) a question, watch it ask the other (atlas, dev), and read the result as a thread.
 
-This tutorial drives Forgehall with the `fh` CLI and, at the end, shows the same thread in the web console. To have agents change code in a repository, continue with [Work on a repository](guides/work-on-a-repository.md).
+This tutorial drives Forgehall with the `fh` CLI and, at the end, shows the same thread in the web console. To have agents change code in a repository, continue with [Work on a repository](guides/work-on-a-repository.md). To understand why agents run in containers, read [Isolation and permissions](concepts/isolation-and-permissions.md).
 
 ## Prerequisites
 
 - Node 22 and pnpm
-- Docker (the bus needs Postgres; a compose file is provided)
-- The Claude Code CLI installed and logged in with your own subscription (`claude` must work in your shell)
+- Docker. Rootless Docker works; `fh setup` detects it.
+- The Claude Code CLI installed and logged in with your own subscription (`claude` must work in your shell). You use it once to create a token for the containers.
 
 Runs call the real Claude Code CLI, so **they consume your account's usage limits**. This tutorial uses Haiku and short tasks to keep that small.
 
@@ -17,19 +17,60 @@ Runs call the real Claude Code CLI, so **they consume your account's usage limit
 ```bash
 git clone <repository-url> forgehall && cd forgehall
 pnpm install && pnpm build
+alias fh="node packages/bus/dist/cli.js"
 ```
 
-## 2. Start Postgres and create the schema
+## 2. Prepare this machine
 
 ```bash
-docker compose -f infra/docker/compose.yaml -p forgehall up -d
-alias fh="node packages/bus/dist/cli.js"
-fh migrate
+fh setup
 ```
 
-Postgres listens on `127.0.0.1:5433`. `fh migrate` prints the migrations it applied.
+Output:
 
-## 3. Create a workspace and two agents
+```
+Data directory: /home/you/.forgehall
+Docker: rootless (stack runs as 0:0)
+Wrote /home/you/forgehall/infra/docker/.env
+
+Next:
+  docker compose -f infra/docker/compose.yaml -p forgehall up -d --build
+  docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
+  claude setup-token   # once; save it to ~/.config/forgehall/claude-token (chmod 600)
+```
+
+`fh setup` creates `~/.forgehall` with the admin token (mode `0600`) and an `upstreams/` folder, and writes `infra/docker/.env` with the data directory and the user the bus runs as. With rootful Docker it prints your uid and gid instead of `0:0`.
+
+## 3. Start the stack
+
+```bash
+docker compose -f infra/docker/compose.yaml -p forgehall up -d --build
+curl -s http://127.0.0.1:4545/health
+```
+
+```
+{"ok":true,"home":"/data"}
+```
+
+This runs Postgres and the bus. The bus applies its migrations at startup, mounts `~/.forgehall` at `/data`, listens on `127.0.0.1:4545` only, and joins the `forgehall-agents` network where agents reach it as `http://bus:4545`. Postgres is published on `127.0.0.1:5433` for `fh`.
+
+## 4. Build the runner image and create a Claude token
+
+Build the image once. Every agent runs in a container from it:
+
+```bash
+docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
+```
+
+Containers cannot use your interactive login, so create a long-lived token for your own subscription, once:
+
+```bash
+claude setup-token
+```
+
+Keep it at hand: in step 6 you add it in the console under **Settings → Claude accounts** (stored in `~/.forgehall/secrets`, readable only by you, never shown again) and pick that account for the workspace. Alternatively set `CLAUDE_CODE_OAUTH_TOKEN` in the shell where you run `fh agent run`.
+
+## 5. Create a workspace and two agents
 
 ```bash
 echo "You are Vigil, the QA agent. Be brief." > vigil.md
@@ -42,17 +83,26 @@ fh agent add dev atlas --name Atlas --role Dev --model haiku --prompt-file atlas
 
 A workspace is an isolated team. Each agent has a role, a default model and an identity prompt (`--prompt-file`). Atlas's prompt plants a fact so you can see it travel from one agent to another.
 
-## 4. Start the bus and one runner per agent
+## 6. Add your Claude account and start the agents
+
+Open the console (`pnpm --filter @forgehall/console dev`, then <http://localhost:5173>), go to **Settings → Claude accounts**, add an account (label, plan, the token from step 4) and select it for the `dev` workspace under **Account per workspace**. Then:
 
 ```bash
-node packages/bus/dist/index.js &                                   # bus on 127.0.0.1:4545
-AGENT_TOKEN=$(fh agent token dev vigil) node packages/runner/dist/index.js &
-AGENT_TOKEN=$(fh agent token dev atlas) node packages/runner/dist/index.js &
+fh agent run dev vigil
+fh agent run dev atlas
+fh agent ps
 ```
 
-`fh agent token` prints a fresh token and invalidates the previous one. Each runner long-polls the bus for work for its own agent. Runners run on your host in this phase and work under `./.work/<thread-id>/`.
+```
+dev/vigil running isolated (docker, 3f9c2ab81d04). Logs: docker logs -f fh-dev-vigil
+dev/atlas running isolated (docker, 5a7e1c0e91b2). Logs: docker logs -f fh-dev-atlas
+dev/vigil  Up 5 seconds  fh-dev-vigil
+dev/atlas  Up 4 seconds  fh-dev-atlas
+```
 
-## 5. Send a task
+Each agent is one container (`fh-<workspace>-<agent>`) on the `forgehall-agents` network, with its own work volume and a restart policy. `fh agent run` issues a fresh agent token, so running it again also restarts the agent. The runner long-polls the bus for work and works under `/home/agent/work/<thread-id>/` in its container.
+
+## 7. Send a task
 
 ```bash
 fh send dev vigil "Ask atlas (ask tool) whether the checkout bug happens without a coupon, then answer me with what atlas said." --title "Checkout total bug"
@@ -70,7 +120,7 @@ Wait a minute or two, then read the thread:
 fh thread THR-0001
 ```
 
-Output from a real run (timestamps and wording will differ):
+Output from a real run, recorded before agents moved into containers (timestamps and wording will differ):
 
 ```
 THR-0001 "Checkout total bug" · in_progress · assignee vigil
@@ -85,12 +135,12 @@ THR-0001 "Checkout total bug" · in_progress · assignee vigil
    Atlas says yes: the checkout total bug also happens without a coupon, in 2 out of 5 runs.
 ```
 
-If the thread has only message #1 yet, the agents are still working. Check the runner and bus logs in the terminal.
+If the thread has only message #1 yet, the agents are still working. Check `docker logs -f fh-dev-vigil`.
 
 ## What happened
 
 1. `fh send` created the thread and message #1. The bus **queued a run** for vigil.
-2. Vigil's runner claimed the run and started `claude -p ...` with the bus attached as an MCP server named `bus`. Vigil called the `ask` tool, which posted message #2 and queued a run for atlas. Asking **ends vigil's turn**; nobody blocks waiting.
+2. Vigil's runner (in its container) claimed the run and started `claude -p ...` with the bus attached as an MCP server named `bus`. Vigil called the `ask` tool, which posted message #2 and queued a run for atlas. Asking **ends vigil's turn**; nobody blocks waiting.
 3. Atlas's runner claimed its run, called `answer` (message #3) and queued a run for vigil.
 4. Vigil's second run **resumed the same Claude session** (`--resume <session_id>`), so it remembered the original task. It called `answer` addressed to `you` (message #4). Messages to you do not create runs; they wait in the thread.
 
@@ -144,7 +194,7 @@ This queues another vigil run on the same thread, resuming its session.
 
 ## Watch it in the console
 
-With the bus running, start the web console in another terminal:
+With the stack running, start the web console in another terminal:
 
 ```bash
 pnpm --filter @forgehall/console dev
@@ -152,25 +202,37 @@ pnpm --filter @forgehall/console dev
 
 Open <http://localhost:5173>. You will see your agents and their status, the thread `THR-0001` with its messages and runs in order, and each agent's live activity (tool calls, messages sent over the bus, cost and duration). You can also send a new task and answer in the thread from there. Memory, Skills, Environment and Versions on an agent page are previews with sample data.
 
+The console's dev server reads the admin token from `~/.forgehall/admin-token` and adds it to every `/api` request it proxies. The browser never sees it. If the console shows `401` errors, run `fh setup` and restart it.
+
+### Answering permission requests
+
+When an agent wants to do something no rule covers, for example `npm install` or `curl`, the run pauses and a card appears under **Waiting on you**, in the thread and on the agent page. Choose **Allow once**, **Always allow** (adds a rule such as `Bash(npm install *)` to that agent) or **Deny**, optionally with a reason. If you do not answer within 15 minutes the request counts as denied. Details: [Isolation and permissions](concepts/isolation-and-permissions.md).
+
 ## If a task stays queued
 
-A run only starts when a runner for that agent is connected. The console marks such an agent **Runner offline** and shows, on the thread, the command to start it. A runner counts as connected while it polls the bus (at least once a minute); start one per agent:
+A run only starts when the agent's runner is connected. The console marks an agent without one **Runner offline**. Start it:
 
 ```bash
-AGENT_TOKEN=$(fh agent token dev vigil) node packages/runner/dist/index.js
+fh agent run dev vigil
+docker logs -f fh-dev-vigil
 ```
+
+Typical causes: the agent was never started, the container exited (see the logs), or the runner image or Claude token is missing (`fh agent run` explains which). A runner that logs a refusal about running directly on this machine is a host runner; start agents with `fh agent run` instead.
 
 ## Stop everything
 
 ```bash
-kill %1 %2 %3                       # bus and both runners, in the shell where you started them
+fh agent stop dev vigil
+fh agent stop dev atlas
 docker compose -f infra/docker/compose.yaml -p forgehall down
 ```
 
-Add `-v` to the last command to also delete the database volume.
+Add `-v` to the last command to also delete the database volume. Agent work volumes (`fh-dev-vigil-work`) stay until you remove them with `docker volume rm`.
 
 ## Next
 
 - [Overview](concepts/overview.md) for how the pieces fit together
 - [CLI reference](reference/cli.md)
-- [SECURITY.md](../SECURITY.md) before you give agents more tools than file access
+- [Isolation and permissions](concepts/isolation-and-permissions.md) for what agents may do
+- [Run agents in Docker](guides/run-agents-in-docker.md) for day-to-day operation
+- [SECURITY.md](../SECURITY.md) before you widen what agents may do
