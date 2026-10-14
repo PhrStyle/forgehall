@@ -70,6 +70,14 @@ Reviewers are chosen at approval time (rather than fixed in config) because who 
 
 Today the bus only records an `approval` message and moves the thread to `awaiting_approval`. There is no approval record, no decision command beyond `fh reply`, and no provider.
 
+## Subscription only
+
+**[now]** Forgehall runs on Claude subscription plan limits and never on per-token billing:
+
+- The runner removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and the Bedrock, Vertex and Foundry switches from the engine's environment.
+- If the engine still starts with a non-subscription credential (`apiKeySource` other than `none`) or reports paid overage (`isUsingOverage`), the runner stops the run at once. The thread is blocked with a `subscription-only` explanation.
+- Dollar figures in the console and run records (`cost_usd`) are Claude Code's estimate of what the same tokens would cost on the API. Nothing is charged.
+
 ## Claude accounts per workspace
 
 **[planned]** Each workspace declares which Claude account(s) it uses (for example a Team seat at work, a personal subscription at home). The runner injects the right credential (`CLAUDE_CODE_OAUTH_TOKEN`) into each run and each agent keeps its own Claude config directory, so switching accounts does not lose sessions.
@@ -84,6 +92,6 @@ Planned switching modes:
 | `manual` | Several accounts; you choose the active one. Fine when all are yours. |
 | `failover` | At the limit, the next run uses the next account. **Off by default.** |
 
-Failover is off by default because it sits in a grey zone of the subscription terms: it is not explicitly forbidden, but it is the pattern closest to working around usage limits. It is available with a warning for people who accept that responsibility. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions. Pay-per-use accounts (API key, Bedrock, Vertex, Foundry) with a daily budget are the always-allowed way to continue past a limit; also planned.
+Failover is off by default because it sits in a grey zone of the subscription terms: it is not explicitly forbidden, but it is the pattern closest to working around usage limits. It is available with a warning for people who accept that responsibility. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions.
 
 See the [configuration reference](../reference/configuration.md) for the planned file formats.

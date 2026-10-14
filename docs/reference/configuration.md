@@ -43,12 +43,9 @@ Data directory, default `~/.forgehall`. See [Learning and data](../concepts/lear
 # ~/.forgehall/config.yaml
 accounts:
   - id: team-work
-    plan: team-standard        # pro | max-5x | max-20x | team-standard | team-premium | api-key
+    plan: team-standard        # pro | max-5x | max-20x | team-standard | team-premium (subscriptions only)
   - id: max-personal
     plan: max-5x
-  - id: api-reserve
-    plan: api-key
-    budget_usd_per_day: 10     # pay-per-use accounts are limited by cost, not time windows
 backup:
   destination: ~/.forgehall/backups
   retention: { daily: 7, weekly: 4, monthly: 6 }

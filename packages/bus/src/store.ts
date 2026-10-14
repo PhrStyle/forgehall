@@ -49,7 +49,7 @@ const DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"];
 export const MAX_ATTEMPTS = 3;
 const RETRY_BASE_SECONDS = 30;
 /** Failures a retry cannot fix (missing login, revoked credentials). */
-const FATAL_ERROR = /not logged in|\/login|invalid api key|authentication|unauthorized|oauth token/i;
+const FATAL_ERROR = /subscription-only|not logged in|\/login|invalid api key|authentication|unauthorized|oauth token/i;
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 

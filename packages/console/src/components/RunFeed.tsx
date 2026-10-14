@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import type { Run, RunEvent } from "../api";
 import { Chip, Icon, ModelChip } from "../ui";
-import { clock, compactInput, money, runDuration } from "../util";
+import { clock, compactInput, money, MONEY_HINT, runDuration } from "../util";
 
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -26,7 +26,7 @@ export function RunHeader({ run }: { run: Run }) {
           <span className="arrow">·</span>
           <Chip tone={run.state === "done" ? "ok" : run.state === "failed" ? "err" : run.state === "running" ? "warn" : ""}>{run.state}</Chip>
           {dur && <span className="mono">{dur}</span>}
-          {run.cost_usd != null && <span className="mono">{money(run.cost_usd)}</span>}
+          {run.cost_usd != null && <span className="mono" title={MONEY_HINT}>{money(run.cost_usd)}</span>}
         </div>
       </div>
     </div>

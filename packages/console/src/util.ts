@@ -76,7 +76,7 @@ export function runDuration(r: Pick<Run, "started_at" | "ended_at">): string {
 export function money(v: string | number | null | undefined): string {
   if (v == null) return "";
   const n = Number(v);
-  return `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+  return `≈$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
 }
 
 export const pct = (v: number | null | undefined) => (v == null ? "n/a" : `${Math.round(v * 100)}%`);
@@ -102,3 +102,6 @@ export function compactInput(input: unknown, max = 160): string {
   s = s.replace(/\s+/g, " ");
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
+
+/** Runs are paid by plan limits; the dollar figure is only what the same tokens would cost on the API. */
+export const MONEY_HINT = "API-equivalent estimate. Not charged: runs use your subscription's plan limits.";

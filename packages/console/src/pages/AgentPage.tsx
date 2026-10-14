@@ -6,7 +6,7 @@ import { EventView, RunHeader } from "../components/RunFeed";
 import { SamplePanels, type SampleTab } from "../components/Samples";
 import { useAgents, useRuns, useRunsEvents } from "../queries";
 import { Avatar, Chip, ErrorBox, ModelChip, StatusChip } from "../ui";
-import { agentStatus, ago, clock, money, runDuration } from "../util";
+import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
 type Tab = "activity" | "runs" | SampleTab;
 const TABS: [Tab, string][] = [["activity", "Activity"], ["runs", "Runs"], ["memory", "Memory"], ["skills", "Skills"], ["environment", "Environment"], ["versions", "Versions"]];
@@ -82,7 +82,7 @@ function RunsTable({ agentId }: { agentId: string }) {
       <ErrorBox error={q.error} />
       {q.isSuccess && rows.length === 0 ? <p className="empty">No runs yet.</p> : (
         <div className="tbl-wrap"><table className="tbl">
-          <thead><tr><th>Run</th><th>Thread</th><th>Model</th><th>State</th><th>Queued</th><th>Duration</th><th>Tokens in/out</th><th>Cost</th><th>Why this model</th></tr></thead>
+          <thead><tr><th>Run</th><th>Thread</th><th>Model</th><th>State</th><th>Queued</th><th>Duration</th><th>Tokens in/out</th><th title={MONEY_HINT}>API-equivalent</th><th>Why this model</th></tr></thead>
           <tbody>{rows.map((r) => (
             <tr key={r.id}>
               <td className="mono">#{r.id}</td>
@@ -92,7 +92,7 @@ function RunsTable({ agentId }: { agentId: string }) {
               <td className="mono muted" title={clock(r.queued_at)}>{ago(r.queued_at)}</td>
               <td className="mono">{runDuration(r)}</td>
               <td className="mono muted">{r.input_tokens ?? "–"} / {r.output_tokens ?? "–"}</td>
-              <td className="mono">{money(r.cost_usd)}</td>
+              <td className="mono" title={MONEY_HINT}>{money(r.cost_usd)}</td>
               <td className="muted">{r.route_reason}{r.error ? <div style={{ color: "var(--err)" }}>{r.error}</div> : null}</td>
             </tr>
           ))}</tbody>

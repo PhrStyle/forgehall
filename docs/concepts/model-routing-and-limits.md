@@ -49,6 +49,5 @@ Each Claude Code CLI run emits a `rate_limit_event` with the account's utilisati
 - Preventive pause when the 7-day window passes 85% or the 5-hour window passes 95%, with a manual release.
 - A per-account concurrency semaphore (default 2) instead of per workspace.
 - A `share` setting dividing the weekly limit between workspaces that share an account.
-- Pay-per-use accounts limited by a dollar budget, measured from each run's `total_cost_usd` (already stored as `cost_usd`).
 
 Until these exist, nothing stops runs when you approach a limit. Watch `fh usage` yourself.

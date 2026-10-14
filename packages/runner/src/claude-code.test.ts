@@ -1,0 +1,55 @@
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import type { RunClaim } from "@forgehall/shared";
+import { ClaudeCodeEngine, PAY_PER_USE_ENV, subscriptionOnlyEnv } from "./claude-code.js";
+
+const claim: RunClaim = {
+  runId: 1, workspaceId: "dev", agentId: "vigil", threadId: "THR-0001", model: "haiku", effort: "low",
+  routeReason: "test", sessionId: null, prompt: "hi", agentPrompt: "", allowedTools: [],
+};
+
+/** A stand-in for the `claude` binary that prints the given stream-json lines. */
+async function fakeClaude(lines: object[]): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "fh-fake-claude-"));
+  const bin = join(dir, "claude");
+  const out = lines.map((l) => JSON.stringify(l)).join("\n");
+  await writeFile(bin, `#!/usr/bin/env node\nprocess.stdout.write(${JSON.stringify(out + "\n")});\nsetTimeout(() => {}, 200);\n`);
+  await chmod(bin, 0o755);
+  return bin;
+}
+
+const run = (bin: string, env: NodeJS.ProcessEnv = {}) =>
+  new ClaudeCodeEngine(bin).run({ claim, cwd: tmpdir(), bus: { url: "http://127.0.0.1:1", token: "t" }, env, onEvent: () => {} });
+
+const init = (apiKeySource: string) => ({ type: "system", subtype: "init", session_id: "s1", apiKeySource });
+const rateLimit = (isUsingOverage: boolean) => ({ type: "rate_limit_event", rate_limit_info: { status: "allowed", isUsingOverage } });
+const success = { type: "result", subtype: "success", session_id: "s1", result: "ok", total_cost_usd: 0.001, usage: { input_tokens: 1, output_tokens: 1 } };
+
+describe("subscription-only guard", () => {
+  it("strips every pay-per-use variable from the engine environment", () => {
+    const env = subscriptionOnlyEnv({ PATH: "/bin", ANTHROPIC_API_KEY: "sk-x", CLAUDE_CODE_USE_BEDROCK: "1" }, { CLAUDE_CODE_OAUTH_TOKEN: "oat" });
+    for (const k of PAY_PER_USE_ENV) expect(env[k]).toBeUndefined();
+    expect(env.PATH).toBe("/bin");
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("oat");
+  });
+
+  it("accepts a run on the subscription", async () => {
+    const r = await run(await fakeClaude([init("none"), rateLimit(false), success]));
+    expect(r.ok).toBe(true);
+    expect(r.sessionId).toBe("s1");
+  });
+
+  it("refuses a run that started with an API key", async () => {
+    const r = await run(await fakeClaude([init("ANTHROPIC_API_KEY"), success]));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/^subscription-only: .*ANTHROPIC_API_KEY/);
+  });
+
+  it("refuses a run that uses paid overage", async () => {
+    const r = await run(await fakeClaude([init("none"), rateLimit(true), success]));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/^subscription-only: .*overage/);
+  });
+});

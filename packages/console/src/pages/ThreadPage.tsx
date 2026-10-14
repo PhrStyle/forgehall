@@ -5,7 +5,7 @@ import { useApp } from "../context";
 import { api, HUMAN, type Message, type MessageType, type Run } from "../api";
 import { useAgents, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
-import { ago, clock, money, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
+import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
 const TYPE_ICON: Record<string, string> = { request: "task", ask: "dm", answer: "say", verify: "result", approval: "check", notify: "info", decision: "escalate" };
 const TYPE_TONE: Record<string, string> = { ask: "sonnet", answer: "haiku", verify: "warn", approval: "warn", decision: "opus" };
@@ -112,7 +112,7 @@ function RunMark({ r }: { r: Run }) {
         {r.route_reason && <><span>·</span><span>{r.route_reason}</span></>}
         <span>·</span><Chip tone={r.state === "done" ? "ok" : r.state === "failed" ? "err" : r.state === "running" ? "warn" : ""}>{r.state}</Chip>
         {dur && <span className="mono">{dur}</span>}
-        {r.cost_usd != null && <span className="mono">{money(r.cost_usd)}</span>}
+        {r.cost_usd != null && <span className="mono" title={MONEY_HINT}>{money(r.cost_usd)}</span>}
         {r.error && <span style={{ color: "var(--err)" }}>{r.error}</span>}
       </div>
     </div>
