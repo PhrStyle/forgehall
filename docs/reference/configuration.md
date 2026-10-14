@@ -75,7 +75,7 @@ approval:
     title_template: "{thread.title} ({thread.id})"
 claude:
   accounts: [team-work]        # order is priority
-  switching: single            # single | manual | failover (off by default, see workspaces)
+  switching: single            # single | manual (your own accounts only)
 limits:
   share: 0.7                   # share of the weekly limit reserved for this workspace
 ```

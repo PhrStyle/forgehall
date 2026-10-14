@@ -64,6 +64,15 @@ The step-by-step version, with expected output, is in [Getting started](docs/get
 
 Agents execute model-driven actions and edit files. Treat them like any automation that acts on your behalf, and run them isolated. In phase 1 the runner runs directly on your host, as your user. To limit the damage, the default allowed tools are file tools only (`Read`, `Glob`, `Grep`, `Edit`, `Write`) plus the bus tools, and `Bash` is not allowed by default. File tools can still read and write anything your user can reach, so do not point agents at directories with secrets. Read [SECURITY.md](SECURITY.md) before giving agents more tools.
 
+## Terms of use and your data
+
+Forgehall is an independent open-source project. It is not affiliated with or endorsed by Anthropic.
+
+- **Your own login, the official CLI.** Every agent runs the unmodified Claude Code CLI, signed in with *your own* Claude account (interactive login or `claude setup-token`). Forgehall never asks for, stores or transmits Claude credentials. Do not share, pool or resell accounts or tokens.
+- **Follow your plan's terms.** Pro and Max are governed by Anthropic's Consumer Terms, Team and Enterprise by the Commercial Terms, and all by the [Usage Policy](https://www.anthropic.com/legal/aup). Anthropic states that subscription limits assume ordinary, individual usage; keep the number of agents and schedules proportionate. You are responsible for what your agents do.
+- **Work accounts.** Using an employer's Team seat or code is subject to your employer's policies. Check them before pointing agents at company repositories.
+- **Where your data goes.** Prompts and code that agents read are sent to Anthropic by Claude Code. Under commercial plans (Team, Enterprise) Anthropic does not train on them; on consumer plans (Pro, Max) that depends on your privacy setting. Claude Code also keeps session transcripts in plain text under `~/.claude/projects/` (30 days by default), and the bus stores threads and run events in your local Postgres. See Anthropic's [data usage](https://code.claude.com/docs/en/data-usage) page.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)

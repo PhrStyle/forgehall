@@ -95,8 +95,7 @@ Planned switching modes:
 |---|---|
 | `single` (default) | One account. At the limit, the queue pauses. |
 | `manual` | Several accounts; you choose the active one. Fine when all are yours. |
-| `failover` | At the limit, the next run uses the next account. **Off by default.** |
 
-Failover is off by default because it sits in a grey zone of the subscription terms: it is not explicitly forbidden, but it is the pattern closest to working around usage limits. It is available with a warning for people who accept that responsibility. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions. Pay-per-use accounts (API key, Bedrock, Vertex, Foundry) with a daily budget are also planned, for people who want them.
+There is no automatic switch to another account when one reaches its limit. Anthropic's Usage Policy forbids using multiple accounts to get around restrictions, and an automatic failover exists only to do that. When the active account reaches its limit, the queue pauses until the limit resets. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions. Pay-per-use accounts (API key, Bedrock, Vertex, Foundry) with a daily budget are also planned, for people who want them.
 
 See the [configuration reference](../reference/configuration.md) for the planned file formats.
