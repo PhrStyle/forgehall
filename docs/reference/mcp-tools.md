@@ -104,7 +104,7 @@ Informs without expecting a reply.
 | `thread_id` | string | yes | |
 | `body` | string (min 1) | yes | |
 
-Effect: posts a `notify`; no state change.
+Effect: posts a `notify`; no state change. It does not wake the recipient: the notice is delivered with that agent's next run in the thread.
 
 ```json
 {"name": "notify", "arguments": {"to": "vigil", "thread_id": "THR-0001", "body": "Branch pushed, no action needed yet."}}

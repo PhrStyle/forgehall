@@ -6,6 +6,10 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 
 - [Getting started](getting-started.md): from a fresh clone to two agents talking to each other and to you.
 
+## How-to guides
+
+- [Run agents in Docker](guides/run-agents-in-docker.md): one container per agent, with a Claude token.
+
 ## Concepts (explanation)
 
 - [Overview](concepts/overview.md): the five pieces, why the Claude Code CLI is the engine, event-driven runs.
@@ -13,6 +17,7 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 - [Threads and messages](concepts/threads-and-messages.md): message types, the thread state machine, the QA-to-merge flow.
 - [Model routing and limits](concepts/model-routing-and-limits.md): which model runs what, queue priorities, real usage readings.
 - [Learning and data](concepts/learning-and-data.md): agent memory in local git, approval of learnings, backups (planned).
+- [Schedules](concepts/schedules.md): agents that run on a cron, with overlap and usage guards (planned).
 - [Roadmap](concepts/roadmap.md): phases F1 to F6 and where phase 1 stands.
 
 ## Reference
