@@ -1,0 +1,79 @@
+# Forgehall
+
+A self-hosted team of persistent Claude Code agents that talk to each other, learn, and wait for your approval.
+
+<!-- screenshot: console (coming with phase 3) -->
+
+Forgehall runs a fixed team of agents (QA, development, research and so on) that you define per workspace, such as `personal` and `work`. Agents exchange messages through their own bus, so work is organised as threads with a history instead of loose chat. Each message wakes the right agent with the official Claude Code CLI, using a model chosen for that task. Anything that matters, such as merging code or saving something to an agent's memory, waits for a human decision. It runs on your machine, with your own Claude subscription.
+
+## Status
+
+Early development. Phase 1 works: the bus (Postgres, MCP, runner API), the runner and the `fh` CLI. The web console, provider adapters, approvals, learning and the Docker runner image are not built yet. See the [roadmap](docs/concepts/roadmap.md).
+
+## How it works
+
+- A **workspace** is an isolated context (agents, threads, tokens). Nothing crosses from one workspace to another.
+- An **agent** is a fixed identity with a role, a default model and a bearer token.
+- Work happens in **threads**. A thread holds typed messages (`request`, `ask`, `answer`, `verify`, `approval`, `notify`, `decision`) and moves through a state machine.
+- The **bus** stores everything in Postgres and exposes MCP tools (`ask`, `answer`, `request`, ...) to agents over HTTP.
+- Every message to an agent queues a **run**. A **runner** claims it, starts `claude -p` (resuming that agent's session for the thread) and streams events back.
+- A deterministic **router** picks the model and effort per run and records why. Nobody waits blocked: asking ends the turn, and the answer arrives as a new run.
+
+## Features
+
+| Working now (phase 1) | Planned |
+|---|---|
+| Postgres-backed bus with threads, messages, runs, run events | Web console (React) with live activity and approvals |
+| MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
+| Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
+| Thread state machine driven by message type | Approval records, `merge` / `pull_request` / `branch_only` policies |
+| Deterministic model routing with recorded reason | Repository providers (local, GitHub, Azure DevOps) |
+| Priority queue, per-workspace concurrency cap | Per-account concurrency, preventive pause near limits |
+| Session resume per agent and thread | Multiple Claude accounts per workspace |
+| Real usage read from `rate_limit_event` | Learning branches, reflection, consolidation |
+| `fh` CLI for workspaces, agents, threads, runs, usage | Local git for agent data, daily encrypted backup |
+| Runner executing the Claude Code CLI on the host | Runner Docker image, then Incus VMs |
+
+## Quickstart
+
+Requires Node 22, pnpm, Docker and a logged-in Claude Code CLI. Runs consume your Claude account's usage limits.
+
+```bash
+pnpm install && pnpm build
+docker compose -f infra/docker/compose.yaml -p forgehall up -d
+alias fh="node packages/bus/dist/cli.js"
+fh migrate
+fh workspace add dev "Dev"
+fh agent add dev vigil --name Vigil --role QA --model haiku
+fh agent add dev atlas --name Atlas --role Dev --model haiku
+node packages/bus/dist/index.js &                                   # bus on 127.0.0.1:4545
+AGENT_TOKEN=$(fh agent token dev vigil) node packages/runner/dist/index.js &
+AGENT_TOKEN=$(fh agent token dev atlas) node packages/runner/dist/index.js &
+fh send dev vigil "Ask atlas (ask tool) whether the checkout bug happens without a coupon, then answer me."
+fh thread THR-0001
+```
+
+The step-by-step version, with expected output, is in [Getting started](docs/getting-started.md).
+
+## Security warning
+
+Agents execute model-driven actions and edit files. Treat them like any automation that acts on your behalf, and run them isolated. In phase 1 the runner runs directly on your host, as your user. To limit the damage, the default allowed tools are file tools only (`Read`, `Glob`, `Grep`, `Edit`, `Write`) plus the bus tools, and `Bash` is not allowed by default. File tools can still read and write anything your user can reach, so do not point agents at directories with secrets. Read [SECURITY.md](SECURITY.md) before giving agents more tools.
+
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [Getting started](docs/getting-started.md) (tutorial)
+- [Architecture overview](docs/concepts/overview.md)
+- [CLI reference](docs/reference/cli.md) and [MCP tools](docs/reference/mcp-tools.md)
+- [Architecture decision records](docs/adr/0000-record-architecture-decisions.md) and [decision log](docs/decisions.md)
+- [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), [Changelog](CHANGELOG.md)
+
+## Requirements
+
+- Node 22 and pnpm
+- Docker (for the local Postgres)
+- Claude Code CLI installed and logged in, with a subscription (Pro, Max or Team). Use only your own account.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
