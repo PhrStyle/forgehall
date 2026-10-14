@@ -26,7 +26,7 @@ Early development. Phase 1 is complete: the bus (Postgres, MCP, runner API, live
 | Postgres-backed bus with threads, messages, runs, run events | Approval policies in the console (`merge`, `pull_request`) |
 | Web console: team, threads, live run activity, usage, new tasks | Schedules (cron agents) with usage guards |
 | Retries with backoff, blocked threads, stale-run recovery | Agent memory, skills and reflection |
-| MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
+| MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `complete`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
 | Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
 | Thread state machine driven by message type | Approval records, `merge` / `pull_request` / `branch_only` policies |
 | Deterministic model routing with recorded reason | Repository providers (local, GitHub, Azure DevOps) |

@@ -110,6 +110,21 @@ Effect: posts a `notify`; no state change. It does not wake the recipient: the n
 {"name": "notify", "arguments": {"to": "vigil", "thread_id": "THR-0001", "body": "Branch pushed, no action needed yet."}}
 ```
 
+## `complete`
+
+Closes a thread when the work is finished and nothing waits on anyone.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `thread_id` | string | yes | |
+| `summary` | string (min 3) | yes | Outcome in a sentence or two; shown to the user |
+
+Only the thread's assignee can complete it, and not while it is `awaiting_approval` (the user's decision closes it). Effect: posts a `complete` message to the user, moves the thread to `done` and cancels any queued runs on it.
+
+```json
+{"name": "complete", "arguments": {"thread_id": "THR-0006", "summary": "Answered: the bug also happens without a coupon (2 of 5 runs)."}}
+```
+
 ## `escalate`
 
 Asks for a stronger model on the caller's next run in this thread.

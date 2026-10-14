@@ -37,9 +37,14 @@ Transitions are automatic and driven by message type:
 | `approval` posted | `awaiting_approval` |
 | `decision` posted (human asks for changes) | `in_progress` |
 | `request` posted while awaiting approval | `in_progress` |
-| Thread is `done` or `cancelled` | no further changes |
+| `complete` posted by the assignee | `done` |
+| The user marks the thread done or cancels it (console, API) | `done` / `cancelled`; queued runs for the thread are cancelled |
+| 3 failed runs in a row, or a login / billing error | `blocked`; the user is told why in the thread |
+| Any message (except `notify`) to a `blocked` thread | `in_progress` |
+| The user reopens a `done`, `cancelled` or `blocked` thread with instructions | `in_progress`; the assignee gets a `request` |
+| Thread is `done` or `cancelled` | no further changes until reopened |
 
-**[now]** Exactly the transitions above. **[planned]** `external_review` (waiting on a reviewer in the provider), `done` after an approval or a completed pull request, `blocked` and `cancelled`: the states exist in the schema but nothing sets them yet.
+**[planned]** `external_review` (waiting on a reviewer in the provider) and `done` after an approval or a completed pull request.
 
 ## The flow: QA finds a bug, dev fixes it, QA verifies, you approve
 

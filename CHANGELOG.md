@@ -8,6 +8,7 @@ Phase 1 (bus, runner, CLI).
 
 ### Added
 
+- `complete` MCP tool for the assignee to close a thread; console actions to mark a thread done, cancel it or reopen it with instructions (`POST /api/threads/:id/close`, `/reopen`).
 - Web console (`packages/console`, Vite + React): team overview, threads list and detail with run markers, agent activity feed from run events, usage meters, new task and message composer, basic approve / request changes, Ctrl+K palette, live updates over SSE. Memory, Skills, Environment and Versions tabs are previews with sample data.
 - Message bus on Postgres: workspaces, agents, threads, messages, runs, run events, sessions and per-workspace usage, with SQL migrations applied at startup.
 - MCP server over HTTP for agents with per-agent bearer tokens and workspace-scoped tools: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `thread_read`, `threads_list`.
