@@ -17,9 +17,13 @@ const name = (ws: string, agent: string) => `fh-${ws}-${agent}`;
 
 export class IsolationError extends Error {}
 
-/** Reads the Claude token made with `claude setup-token`; containers cannot use the interactive login. */
-async function claudeToken(): Promise<string> {
+/**
+ * The Claude token for an agent: CLAUDE_CODE_OAUTH_TOKEN if set, else the workspace's account
+ * (Settings → Claude accounts), else the legacy file. Containers cannot use the interactive login.
+ */
+async function claudeToken(workspaceToken: string | null): Promise<string> {
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) return process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (workspaceToken) return workspaceToken;
   try {
     const t = (await readFile(claudeTokenPath(), "utf8")).trim();
     if (t) return t;
@@ -27,8 +31,7 @@ async function claudeToken(): Promise<string> {
     /* handled below */
   }
   throw new IsolationError(
-    `No Claude token for isolated agents. Create one once with \`claude setup-token\` and save it with:\n` +
-      `  install -D -m 600 /dev/null ${claudeTokenPath()} && $EDITOR ${claudeTokenPath()}`,
+    "No Claude account for this workspace. Create a token once with `claude setup-token`, then add it in the console: Settings → Claude accounts, and pick it for the workspace.",
   );
 }
 
@@ -38,6 +41,8 @@ export interface StartOptions {
   agentToken: string;
   isolation: Isolation;
   billing?: string;
+  /** Token of the workspace's Claude account, if one is configured. */
+  workspaceToken?: string | null;
 }
 
 /** Starts (or restarts) the agent's isolated runner. */
@@ -51,7 +56,7 @@ export async function startAgent(o: StartOptions): Promise<string> {
   if (!(await agentNetworkExists())) {
     throw new IsolationError(`The ${AGENT_NETWORK} network does not exist: start the stack first:\n  docker compose -f infra/docker/compose.yaml -p forgehall up -d --build`);
   }
-  const token = await claudeToken();
+  const token = await claudeToken(o.workspaceToken ?? null);
   const n = name(o.workspace, o.agent);
   await exec("docker", ["rm", "-f", n]).catch(() => {});
   const env = [

@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { HUMAN, MessageType } from "@forgehall/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { PLANS } from "./accounts.js";
 import { isAdmin } from "./admin.js";
 import { CHANGES_CHANNEL, type Change, type Store } from "./store.js";
 
@@ -112,6 +113,18 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
   const Reopen = z.object({ note: z.string().min(1) });
   app.post<{ Params: { id: string } }>("/api/threads/:id/reopen", async (req, reply) => {
     await store.reopenThread(req.params.id, Reopen.parse(req.body).note);
+    return reply.code(204).send();
+  });
+
+  app.get("/api/accounts", async () => store.accounts());
+  const NewAccount = z.object({ id: z.string().regex(/^[a-z0-9][a-z0-9-]*$/), label: z.string().min(1), plan: z.enum(PLANS), token: z.string().min(1) });
+  app.post("/api/accounts", async (req, reply) => reply.code(201).send(await store.addAccount(NewAccount.parse(req.body))));
+  app.delete<{ Params: { id: string } }>("/api/accounts/:id", async (req, reply) => {
+    await store.deleteAccount(req.params.id);
+    return reply.code(204).send();
+  });
+  app.put<{ Params: { ws: string } }>("/api/workspaces/:ws/account", async (req, reply) => {
+    await store.setWorkspaceAccount(req.params.ws, z.object({ account: z.string().nullable() }).parse(req.body).account);
     return reply.code(204).send();
   });
 

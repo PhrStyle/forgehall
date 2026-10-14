@@ -80,7 +80,9 @@ async function main() {
         if (sub === "run") {
           if (!(await store.agent(ws, id))) throw new Error(`agent ${ws}/${id} does not exist`);
           const isolation = (values.isolation ?? "docker") as Isolation;
-          const container = await startAgent({ workspace: ws, agent: id, agentToken: await store.issueAgentToken(ws, id), isolation, billing: process.env.FORGEHALL_BILLING });
+          // The bus may run in a container with its own data path; on the host, tokens are under ~/.forgehall.
+          const account = await store.workspaceToken(ws);
+          const container = await startAgent({ workspace: ws, agent: id, agentToken: await store.issueAgentToken(ws, id), isolation, billing: process.env.FORGEHALL_BILLING, workspaceToken: account?.token ?? null });
           console.log(`${ws}/${id} running isolated (${isolation}, ${container}). Logs: docker logs -f fh-${ws}-${id}`);
           break;
         }

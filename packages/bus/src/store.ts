@@ -5,6 +5,7 @@ import type { Sql } from "./db.js";
 
 type Tx = Sql | postgres.TransactionSql;
 import { branchDiff, ensureStaging, MergeConflictError, mergeAndPublish, revParse, stagingPath, threadBranch } from "./git.js";
+import { readAccountToken, removeAccountToken, writeAccountToken } from "./accounts.js";
 import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
@@ -82,6 +83,15 @@ export interface PermissionRow {
   reason: string | null;
   created_at: Date;
   decided_at: Date | null;
+}
+
+export interface AccountRow {
+  id: string;
+  label: string;
+  plan: string;
+  token_hint: string;
+  created_at: Date;
+  workspaces: string[];
 }
 
 export class BusError extends Error {}
@@ -554,6 +564,44 @@ export class Store {
     return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
   }
 
+  // ---------- Claude accounts ----------
+
+  async accounts(): Promise<AccountRow[]> {
+    return this.sql<AccountRow[]>`SELECT a.*, coalesce(array_agg(w.id) FILTER (WHERE w.id IS NOT NULL), '{}') AS workspaces
+      FROM claude_accounts a LEFT JOIN workspaces w ON w.claude_account_id = a.id GROUP BY a.id ORDER BY a.created_at`;
+  }
+
+  /** Saves a subscription token (file, 0600) and its metadata. API keys are refused: they bill per token. */
+  async addAccount(a: { id: string; label: string; plan: string; token: string }): Promise<AccountRow> {
+    const token = a.token.trim();
+    if (/^sk-ant-api/i.test(token)) throw new BusError("This is an API key, which is billed per token. Use a subscription token from `claude setup-token`.");
+    if (token.length < 20 || /\s/.test(token)) throw new BusError("That does not look like a token from `claude setup-token`.");
+    await writeAccountToken(a.id, token);
+    const [row] = await this.sql<AccountRow[]>`INSERT INTO claude_accounts (id, label, plan, token_hint)
+      VALUES (${a.id}, ${a.label}, ${a.plan}, ${token.slice(-4)})
+      ON CONFLICT (id) DO UPDATE SET label = EXCLUDED.label, plan = EXCLUDED.plan, token_hint = EXCLUDED.token_hint
+      RETURNING *, '{}'::text[] AS workspaces`;
+    return row!;
+  }
+
+  async deleteAccount(id: string): Promise<void> {
+    await this.sql`DELETE FROM claude_accounts WHERE id = ${id}`;
+    await removeAccountToken(id);
+  }
+
+  async setWorkspaceAccount(workspaceId: string, accountId: string | null): Promise<void> {
+    const rows = await this.sql`UPDATE workspaces SET claude_account_id = ${accountId} WHERE id = ${workspaceId} RETURNING id`;
+    if (rows.length === 0) throw new BusError(`workspace ${workspaceId} not found`);
+  }
+
+  /** The token agents of this workspace sign in with, or null when the workspace has no account. */
+  async workspaceToken(workspaceId: string): Promise<{ account: string; token: string } | null> {
+    const [ws] = await this.sql<{ claude_account_id: string | null }[]>`SELECT claude_account_id FROM workspaces WHERE id = ${workspaceId}`;
+    if (!ws?.claude_account_id) return null;
+    const token = await readAccountToken(ws.claude_account_id);
+    return token ? { account: ws.claude_account_id, token } : null;
+  }
+
   // ---------- settings & tool permissions ----------
 
   async setting<T>(key: string, fallback: T): Promise<T> {
@@ -626,7 +674,7 @@ export class Store {
   // ---------- read models for the console ----------
 
   async workspaces() {
-    return this.sql<{ id: string; name: string }[]>`SELECT id, name FROM workspaces ORDER BY id`;
+    return this.sql<{ id: string; name: string; claude_account_id: string | null }[]>`SELECT id, name, claude_account_id FROM workspaces ORDER BY id`;
   }
 
   /** Agents with what they are doing right now, derived from their runs. */
