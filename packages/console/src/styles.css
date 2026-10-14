@@ -410,3 +410,10 @@ table.tbl{width:100%;border-collapse:collapse;max-width:1000px;font-size:12.5px}
 .tile .now.mono{font-family:var(--font-ui);font-size:12.5px}
 .ev-pending-note{font-size:12px;color:var(--faint)}
 @media (max-width:820px){.banner{padding:9px 16px}}
+
+/* thread actions */
+.th-actions{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.input{background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r);padding:6px 10px;min-width:0}
+.input.sm{font-size:12.5px;padding:4px 9px;width:220px;max-width:100%}
+.btn.danger{border-color:color-mix(in srgb,var(--err) 55%,transparent);color:var(--err)}
+.btn.danger:hover{background:color-mix(in srgb,var(--err) 12%,transparent)}

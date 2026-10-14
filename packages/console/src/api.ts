@@ -95,6 +95,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // The Vite proxy answers 500/502/504 when the bus is down.
     throw new ApiError(msg, res.status === 502 || res.status === 504 || res.status === 500 && msg.includes("ECONNREFUSED") ? 0 : res.status);
   }
+  // 204 No Content (close, reopen…) has no body to parse.
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -111,6 +113,10 @@ export const api = {
     request<{ id: string }>("/api/threads", { method: "POST", body: JSON.stringify(b) }),
   postMessage: (threadId: string, b: { to: string; type: MessageType; body: string; replyTo?: string }) =>
     request<Message>(`/api/threads/${enc(threadId)}/messages`, { method: "POST", body: JSON.stringify(b) }),
+  closeThread: (threadId: string, b: { state: "done" | "cancelled"; note?: string }) =>
+    request<void>(`/api/threads/${enc(threadId)}/close`, { method: "POST", body: JSON.stringify(b) }),
+  reopenThread: (threadId: string, note: string) =>
+    request<void>(`/api/threads/${enc(threadId)}/reopen`, { method: "POST", body: JSON.stringify({ note }) }),
 };
 
 export const HUMAN = "you";

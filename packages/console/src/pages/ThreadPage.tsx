@@ -7,8 +7,8 @@ import { useAgents, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
-const TYPE_ICON: Record<string, string> = { request: "task", ask: "dm", answer: "say", verify: "result", approval: "check", notify: "info", decision: "escalate" };
-const TYPE_TONE: Record<string, string> = { ask: "sonnet", answer: "haiku", verify: "warn", approval: "warn", decision: "opus" };
+const TYPE_ICON: Record<string, string> = { request: "task", ask: "dm", answer: "say", verify: "result", approval: "check", notify: "info", decision: "escalate", complete: "check" };
+const TYPE_TONE: Record<string, string> = { ask: "sonnet", answer: "haiku", verify: "warn", approval: "warn", decision: "opus", complete: "ok" };
 
 type Item = { kind: "msg"; at: number; m: Message } | { kind: "run"; at: number; r: Run };
 
@@ -47,6 +47,7 @@ export function ThreadPage() {
           <Chip tone={stateTone(thread.state)}>{STATE_LABEL[thread.state]}</Chip>
           {thread.severity && <Chip tone={thread.severity === "high" ? "err" : thread.severity === "medium" ? "warn" : ""}>{thread.severity}</Chip>}
           <div className="meta">assignee <span className="mono">{thread.assignee ?? "none"}</span> · updated {ago(thread.updated_at)}</div>
+          <ThreadActions threadId={thread.id} state={thread.state} canReopen={!!thread.assignee && thread.assignee !== HUMAN} />
         </div>
         {stepIdx >= 0 ? (
           <ol className="stepper" style={{ ["--n" as string]: STEPS.length }} aria-label="Thread progress">
@@ -178,6 +179,51 @@ function ApprovalCard({ threadId, assignee }: { threadId: string; assignee: stri
         <button className="btn primary" disabled={!to || m.isPending} onClick={() => m.mutate({ to, type: "decision", body: comment.trim() ? `Approved. ${comment.trim()}` : "Approved." })}>Approve</button>
         <button className="btn" disabled={!to || m.isPending} onClick={() => { if (!comment.trim()) return setBad(true); m.mutate({ to, type: "decision", body: `Changes requested: ${comment.trim()}` }); }}>Request changes</button>
       </div>
+    </div>
+  );
+}
+
+/** Close (done / cancelled) or reopen a thread. Cancelling and reopening ask for one more step. */
+function ThreadActions({ threadId, state, canReopen }: { threadId: string; state: string; canReopen: boolean }) {
+  const qc = useQueryClient();
+  const { toast } = useApp();
+  const [mode, setMode] = useState<"idle" | "cancel" | "reopen">("idle");
+  const [note, setNote] = useState("");
+  const done = () => { setMode("idle"); setNote(""); void qc.invalidateQueries(); };
+  const close = useMutation({
+    mutationFn: (s: "done" | "cancelled") => api.closeThread(threadId, { state: s, ...(note.trim() ? { note: note.trim() } : {}) }),
+    onSuccess: (_d, s) => { toast(s === "done" ? "Thread marked done" : "Thread cancelled"); done(); },
+  });
+  const reopen = useMutation({
+    mutationFn: () => api.reopenThread(threadId, note.trim()),
+    onSuccess: () => { toast("Thread reopened"); done(); },
+  });
+  const closed = state === "done" || state === "cancelled";
+  const reopenable = closed || state === "blocked";
+  const err = close.error ?? reopen.error;
+
+  if (mode === "cancel") return (
+    <div className="actions th-actions">
+      <input className="input sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Reason (optional)" aria-label="Reason for cancelling" />
+      <button className="btn sm" onClick={() => setMode("idle")}>Keep</button>
+      <button className="btn sm danger" disabled={close.isPending} onClick={() => close.mutate("cancelled")}>Cancel thread</button>
+      {err && <ErrorBox error={err} />}
+    </div>
+  );
+  if (mode === "reopen") return (
+    <div className="actions th-actions">
+      <input className="input sm" value={note} onChange={(e) => setNote(e.target.value)} placeholder="What should happen now?" aria-label="Instructions for the assignee" autoFocus />
+      <button className="btn sm" onClick={() => setMode("idle")}>Back</button>
+      <button className="btn sm primary" disabled={!note.trim() || reopen.isPending} onClick={() => reopen.mutate()}>Reopen</button>
+      {err && <ErrorBox error={err} />}
+    </div>
+  );
+  return (
+    <div className="actions th-actions">
+      {!closed && <button className="btn sm" disabled={close.isPending} onClick={() => close.mutate("done")}>Mark done</button>}
+      {!closed && <button className="btn sm ghost" onClick={() => setMode("cancel")}>Cancel…</button>}
+      {reopenable && canReopen && <button className="btn sm" onClick={() => setMode("reopen")}>Reopen…</button>}
+      {err && <ErrorBox error={err} />}
     </div>
   );
 }
