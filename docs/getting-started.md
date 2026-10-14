@@ -152,6 +152,14 @@ pnpm --filter @forgehall/console dev
 
 Open <http://localhost:5173>. You will see your agents and their status, the thread `THR-0001` with its messages and runs in order, and each agent's live activity (tool calls, messages sent over the bus, cost and duration). You can also send a new task and answer in the thread from there. Memory, Skills, Environment and Versions on an agent page are previews with sample data.
 
+## If a task stays queued
+
+A run only starts when a runner for that agent is connected. The console marks such an agent **Runner offline** and shows, on the thread, the command to start it. A runner counts as connected while it polls the bus (at least once a minute); start one per agent:
+
+```bash
+AGENT_TOKEN=$(fh agent token dev vigil) node packages/runner/dist/index.js
+```
+
 ## Stop everything
 
 ```bash

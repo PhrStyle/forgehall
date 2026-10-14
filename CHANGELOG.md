@@ -8,6 +8,7 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories and approvals).
 
 ### Added
 
+- Runner presence: the bus records when each agent's runner polls; the console shows **Runner offline** and a banner with the start command when work is queued for an agent without a runner.
 - Repositories: `fh repo add <ws> <id> <upstream> [--base main]` and `fh repos <ws>`; provider `local`. Each repo gets a staging remote (bare repository under `$FORGEHALL_HOME/staging/<ws>/<id>.git`) with a `pre-receive` hook that accepts only `refs/heads/fh/*` and no deletions. `FORGEHALL_HOME` is now read by the bus and `fh`.
 - Git smart HTTP on the bus at `/git/<ws>/<repo>.git`, authenticated with the agent token (401 without, 403 for another workspace).
 - Threads bound to a repository (`fh send --repo`, `repo` in `POST /api/threads` and in the `request` MCP tool, a Repository field in the console), each with a branch `fh/<THREAD-ID>`.
