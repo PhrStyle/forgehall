@@ -178,6 +178,9 @@ importers:
 
   packages/bus:
     dependencies:
+      '@forgehall/providers':
+        specifier: workspace:*
+        version: link:../providers
       '@forgehall/shared':
         specifier: workspace:*
         version: link:../shared
