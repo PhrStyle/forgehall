@@ -4,7 +4,9 @@ export type ThreadState = "open" | "in_progress" | "verifying" | "awaiting_appro
 export type MessageType = "request" | "ask" | "answer" | "verify" | "approval" | "notify" | "decision";
 export type ModelName = "haiku" | "sonnet" | "opus";
 
-export interface Workspace { id: string; name: string }
+export interface Workspace { id: string; name: string; claude_account_id?: string | null }
+export type AccountPlan = "pro" | "max-5x" | "max-20x" | "team-standard" | "team-premium" | "enterprise";
+export interface Account { id: string; label: string; plan: AccountPlan; token_hint: string; created_at: string; workspaces: string[] }
 
 export interface AgentOverview {
   id: string;
@@ -151,6 +153,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 export const api = {
   workspaces: () => request<Workspace[]>("/api/workspaces"),
+  accounts: () => request<Account[]>("/api/accounts"),
+  // The token only travels in this request body; it is never returned, logged or cached.
+  saveAccount: (b: { id: string; label: string; plan: AccountPlan; token: string }) =>
+    request<Account>("/api/accounts", { method: "POST", body: JSON.stringify(b) }),
+  deleteAccount: (id: string) => request<void>(`/api/accounts/${enc(id)}`, { method: "DELETE" }),
+  setWorkspaceAccount: (ws: string, account: string | null) =>
+    request<void>(`/api/workspaces/${enc(ws)}/account`, { method: "PUT", body: JSON.stringify({ account }) }),
   agents: (ws: string) => request<AgentOverview[]>(`/api/workspaces/${enc(ws)}/agents`),
   threads: (ws: string) => request<ThreadOverview[]>(`/api/workspaces/${enc(ws)}/threads`),
   repos: (ws: string) => request<RepoRow[]>(`/api/workspaces/${enc(ws)}/repos`),

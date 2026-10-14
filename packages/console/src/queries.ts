@@ -27,3 +27,4 @@ export const useDiff = (id: string | undefined, enabled: boolean) => useQuery({ 
 export const useApprovals = (id: string | undefined, enabled: boolean) => useQuery({ queryKey: ["thread", id, "approvals"], queryFn: () => api.approvals(id!), enabled: !!id && enabled });
 export const usePermissions = (ws: string | null) => useQuery({ queryKey: ["permissions", ws], queryFn: () => api.permissions(ws!), enabled: !!ws, placeholderData: keepPreviousData, refetchInterval: 30_000 });
 export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api.settings });
+export const useAccounts = () => useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
