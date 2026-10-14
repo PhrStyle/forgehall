@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { RunClaim, type RunEvent } from "@forgehall/shared";
 import { billingModeFrom, ClaudeCodeEngine } from "./claude-code.js";
 import type { Engine } from "./engine.js";
+import { commitAndPush, prepareCheckout, type RepoCheckout } from "./workspace.js";
 
 export type { Engine, EngineResult, EngineRun } from "./engine.js";
 export { ClaudeCodeEngine, billingModeFrom, type BillingMode } from "./claude-code.js";
@@ -54,8 +55,21 @@ export class Runner {
   }
 
   async execute(claim: RunClaim): Promise<void> {
-    const cwd = join(this.cfg.workRoot, claim.threadId);
-    await mkdir(cwd, { recursive: true });
+    let cwd = join(this.cfg.workRoot, claim.threadId);
+    let checkout: RepoCheckout | null = null;
+    if (claim.repo) {
+      try {
+        checkout = await prepareCheckout(claim, this.cfg.busUrl, this.cfg.agentToken, this.cfg.workRoot);
+        cwd = checkout.dir;
+      } catch (e) {
+        const error = `checkout of ${claim.repo.branch} failed: ${(e as Error).message.split("\n")[0]}`;
+        console.error(`[runner] ${error}`);
+        await this.call(`/runner/runs/${claim.runId}/finish`, { ok: false, sessionId: claim.sessionId, error });
+        return;
+      }
+    } else {
+      await mkdir(cwd, { recursive: true });
+    }
     console.log(`[runner] run ${claim.runId} · ${claim.threadId} · ${claim.model}/${claim.effort} · ${claim.routeReason}`);
 
     // Events go to the bus in small batches so the console can follow along.
@@ -89,6 +103,17 @@ export class Runner {
     });
     clearInterval(timer);
     clearInterval(heartbeat);
+
+    // The agent's file changes become a commit on the thread branch.
+    if (checkout && result.ok) {
+      try {
+        const commit = await commitAndPush(checkout, claim);
+        if (commit) buffer.push({ kind: "git.push", payload: { branch: claim.repo!.branch, commit } });
+      } catch (e) {
+        result.ok = false;
+        result.error = `pushing ${claim.repo!.branch} failed: ${(e as Error).message.split("\n")[0]}`;
+      }
+    }
     await flush();
 
     const res = await this.call(`/runner/runs/${claim.runId}/finish`, result);
