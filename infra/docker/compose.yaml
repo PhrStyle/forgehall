@@ -5,6 +5,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: forgehall
       POSTGRES_PASSWORD: forgehall_dev

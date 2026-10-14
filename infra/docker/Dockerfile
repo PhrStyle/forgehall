@@ -36,7 +36,9 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
  && npm cache clean --force
-RUN useradd --create-home --uid 10001 agent
+# The work directory must exist and belong to the agent: a new named volume copies this ownership.
+RUN useradd --create-home --uid 10001 agent \
+ && mkdir -p /home/agent/work && chown agent:agent /home/agent/work
 COPY --from=build /out/runner /opt/forgehall/runner
 USER agent
 WORKDIR /home/agent
