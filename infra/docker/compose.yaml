@@ -15,5 +15,19 @@ services:
       timeout: 3s
       retries: 10
 
+  # Containerized bus (profile "stack"). For development you can run it on the host instead.
+  bus:
+    profiles: ["stack"]
+    build: { context: ../.., dockerfile: infra/docker/Dockerfile, target: bus }
+    image: forgehall/bus:dev
+    environment:
+      DATABASE_URL: postgres://forgehall:forgehall_dev@postgres:5432/forgehall
+    ports:
+      - "127.0.0.1:4545:4545"
+    depends_on:
+      postgres: { condition: service_healthy }
+
 volumes:
   postgres-data:
+
+# Runners join this network as "forgehall_default" and reach the bus at http://bus:4545.
