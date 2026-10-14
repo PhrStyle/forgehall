@@ -55,6 +55,7 @@ export function buildHttp(store: Store, opts: HttpOptions): FastifyInstance {
   app.post("/runner/claim", async (req, reply) => {
     const agent = await agentOf(req);
     if (!agent) return reply.code(401).send({ error: "invalid agent token" });
+    await store.touchRunner(agent);
     const deadline = Date.now() + opts.claimWaitMs;
     for (;;) {
       const claim = await store.claimRun(agent, opts.maxRunning);

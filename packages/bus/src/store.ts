@@ -84,7 +84,8 @@ export type Change =
   | { kind: "thread"; workspace: string; thread: string }
   | { kind: "message"; workspace: string; thread: string; message: string }
   | { kind: "run"; workspace: string; thread: string; run: number; state: string }
-  | { kind: "run_event"; workspace: string; run: number };
+  | { kind: "run_event"; workspace: string; run: number }
+  | { kind: "agent"; workspace: string; agent: string };
 
 export const CHANGES_CHANNEL = "forgehall_changes";
 
@@ -255,6 +256,17 @@ export class Store {
    * Hands the next queued run of this agent to its runner, with the prompt built from every
    * message not yet delivered to the agent in that thread. Returns null when there is nothing to do.
    */
+  /** Records that this agent's runner is polling, so the console can show it as online. */
+  async touchRunner(agent: AgentRow): Promise<void> {
+    const [prev] = await this.sql<{ stale: boolean }[]>`
+      UPDATE agents a SET runner_seen_at = now()
+      FROM (SELECT runner_seen_at FROM agents WHERE workspace_id = ${agent.workspace_id} AND id = ${agent.id}) old
+      WHERE a.workspace_id = ${agent.workspace_id} AND a.id = ${agent.id}
+      RETURNING (old.runner_seen_at IS NULL OR old.runner_seen_at < now() - interval '60 seconds') AS stale`;
+    // Only the offline -> online transition is worth a live update; polls are frequent.
+    if (prev?.stale) await notify(this.sql, { kind: "agent", workspace: agent.workspace_id, agent: agent.id });
+  }
+
   async claimRun(agent: AgentRow, maxRunningPerWorkspace: number): Promise<RunClaim | null> {
     return this.sql.begin(async (tx) => {
       // Serialize claims per workspace so the concurrency cap holds.
@@ -531,7 +543,8 @@ export class Store {
   /** Agents with what they are doing right now, derived from their runs. */
   async agentsOverview(workspaceId: string) {
     return this.sql`
-      SELECT a.id, a.name, a.role, a.default_model,
+      SELECT a.id, a.name, a.role, a.default_model, a.runner_seen_at,
+        (a.runner_seen_at > now() - interval '60 seconds') AS runner_online,
         cur.id AS run_id, cur.thread_id AS run_thread, cur.model AS run_model, cur.started_at AS run_started_at,
         (SELECT count(*)::int FROM runs q WHERE q.workspace_id = a.workspace_id AND q.agent_id = a.id AND q.state = 'queued') AS queued,
         last.state AS last_state, last.error AS last_error, last.ended_at AS last_ended_at,
