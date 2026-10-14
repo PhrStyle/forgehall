@@ -13,7 +13,13 @@ RUN pnpm install --frozen-lockfile \
 
 # ---------- bus ----------
 FROM node:22-bookworm-slim AS bus
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=4545
+# git: staging remotes, diffs and merges. The data directory is a bind mount whose owner depends
+# on the host (rootless or not), so git must not refuse it as "dubious ownership".
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory '*'
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=4545 FORGEHALL_HOME=/data HOME=/tmp
 WORKDIR /app
 COPY --from=build /out/bus .
 USER node
@@ -35,6 +41,7 @@ COPY --from=build /out/runner /opt/forgehall/runner
 USER agent
 WORKDIR /home/agent
 ENV WORK_ROOT=/home/agent/work \
+    FORGEHALL_RUNNER_MODE=container \
     BUS_URL=http://bus:4545 \
     DISABLE_AUTOUPDATER=1
 CMD ["node", "/opt/forgehall/runner/dist/index.js"]

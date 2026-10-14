@@ -1,3 +1,7 @@
+# The Forgehall stack: Postgres and the bus. Run `fh setup` once first (it writes .env here).
+#   docker compose -f infra/docker/compose.yaml -p forgehall up -d --build
+# Isolated agents join the "forgehall-agents" network and reach the bus at http://bus:4545.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -6,7 +10,7 @@ services:
       POSTGRES_PASSWORD: forgehall_dev
       POSTGRES_DB: forgehall
     ports:
-      - "127.0.0.1:5433:5432"
+      - "127.0.0.1:5433:5432"   # for the fh CLI on the host
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -15,19 +19,26 @@ services:
       timeout: 3s
       retries: 10
 
-  # Containerized bus (profile "stack"). For development you can run it on the host instead.
   bus:
-    profiles: ["stack"]
     build: { context: ../.., dockerfile: infra/docker/Dockerfile, target: bus }
     image: forgehall/bus:dev
+    # Rootless Docker: 0:0 maps to your user. Rootful: your uid. `fh setup` picks the right one.
+    user: "${FORGEHALL_UID:-1000}:${FORGEHALL_GID:-1000}"
     environment:
       DATABASE_URL: postgres://forgehall:forgehall_dev@postgres:5432/forgehall
+    volumes:
+      # Staging remotes, local upstreams and the admin token live in ~/.forgehall on the host.
+      - "${FORGEHALL_HOME_HOST:?run fh setup first}:/data"
     ports:
-      - "127.0.0.1:4545:4545"
+      - "127.0.0.1:4545:4545"   # console and fh on this machine only
+    networks: [default, agents]
     depends_on:
       postgres: { condition: service_healthy }
+    restart: unless-stopped
+
+networks:
+  agents:
+    name: forgehall-agents
 
 volumes:
   postgres-data:
-
-# Runners join this network as "forgehall_default" and reach the bus at http://bus:4545.
