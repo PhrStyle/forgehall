@@ -1,0 +1,100 @@
+# Work on a repository
+
+You will register a sample git repository with a bug, ask an agent to fix it on its own branch, review the diff in the console, approve it, and see the fix land in the repository.
+
+Status: **implemented (phase 2)**, `local` provider and `merge` approval policy only. Pull requests on GitHub or Azure DevOps are planned.
+
+Prerequisites: the setup from [Getting started](../getting-started.md) (bus, runner for `atlas`, console) and `git` installed. Agents need the default file tools; they do not run git.
+
+## 1. Create a sample upstream
+
+A bare repository stands in for your real remote. Any URL or path that `git push` accepts works as an upstream.
+
+```bash
+mkdir -p /tmp/fh-demo && cd /tmp/fh-demo
+git init -q --bare -b main checkout-app.git
+git clone -q checkout-app.git seed && cd seed
+cat > total.js <<'JS'
+// Returns the order total in cents after a percentage coupon.
+export function total(items, couponPercent = 0) {
+  const sum = items.reduce((acc, i) => acc + i.cents, 0);
+  return Math.floor(sum - sum * couponPercent / 100); // bug: rounds down
+}
+JS
+git add -A && git commit -qm "Add total()" && git push -q origin HEAD:main
+```
+
+## 2. Register the repository
+
+From the Forgehall checkout:
+
+```bash
+fh repo add dev checkout-app /tmp/fh-demo/checkout-app.git --base main
+# repo dev/checkout-app ok · upstream /tmp/fh-demo/checkout-app.git · base main · staging ready
+fh repos dev
+# checkout-app  local  main  /tmp/fh-demo/checkout-app.git
+```
+
+This created the staging remote at `~/.forgehall/staging/dev/checkout-app.git` (or under `$FORGEHALL_HOME`). Agents push there, never to your upstream. The bus must be able to read this path, so run `fh` and the bus with the same `FORGEHALL_HOME`.
+
+## 3. Ask atlas to fix the bug
+
+With the CLI:
+
+```bash
+fh send dev atlas "total() in total.js rounds down; it should round to the nearest cent. Fix it, then ask for approval." \
+  --title "Coupon rounding" --repo checkout-app
+# THR-0001 opened for atlas
+```
+
+Or in the console: **New task**, pick `atlas`, choose the repository `checkout-app` in the **Repository** field, and send.
+
+The thread gets its own branch, `fh/THR-0001`. When atlas starts, the runner checks that branch out in `WORK_ROOT/THR-0001/` and atlas edits files there with its file tools. When the run ends successfully, the runner commits the change and pushes it to the staging remote; you will see a `git.push` event in the run's activity.
+
+## 4. Watch the branch and the diff
+
+Open the thread in the console. The **branch card** shows `fh/THR-0001` against `main`, with commits and changed files, and the **diff viewer** shows the patch. The same data is available as JSON:
+
+```bash
+curl -s http://127.0.0.1:4545/api/threads/THR-0001/diff | head -c 600
+```
+
+You can also inspect the branch in git: `git -C ~/.forgehall/staging/dev/checkout-app.git log main..fh/THR-0001 --stat`.
+
+## 5. Approve and merge
+
+![Approval in the console: the branch diff, the pinned commit and the Approve and merge button](../assets/console-approval.png)
+
+When atlas calls `request_approval`, the thread moves to `awaiting_approval` and an **approval card** appears, pinned to the exact commit atlas pushed. Review the diff, then choose:
+
+- **Approve and merge**: the bus merges that commit into `main` and pushes it to your upstream. The thread closes with the message `Approved and merged into main as <sha>`.
+- **Request changes**: write what should change (required). It goes to atlas as `Changes requested: ...` and starts a new run on the same branch.
+
+## 6. Check the upstream
+
+```bash
+git -C /tmp/fh-demo/checkout-app.git log --oneline --graph main
+# *   3f9c2ab Merge fh/THR-0001: Coupon rounding
+# |\
+# | * 81d04e7 atlas: THR-0001 (run 1)
+# |/
+# * 5a7e1c0 Add total()
+```
+
+The merge commit is authored by `Forgehall <forgehall@localhost>`; atlas's commit keeps its own author.
+
+## What if
+
+**The approval says the branch changed.** Someone (usually the agent, in a later run) pushed after the approval was requested. Approvals are pinned to a commit, and the bus refuses to merge anything you have not seen. Nothing was published. Ask the agent to request approval again; this supersedes the old approval with a new one pinned to the current head.
+
+**The approval says the branch conflicts with `main`.** Another change reached `main` first and touches the same lines. The bus never resolves conflicts. Use **Request changes** with "main moved; update your change on top of it", or reply to the thread; the next run starts from the thread branch, so atlas has to redo the edit against the latest base. Note that the runner starts from the existing thread branch, not from a new `main`, so be explicit about what to redo.
+
+**"Nothing to approve".** `request_approval` on a repo thread fails when the branch has no commits ahead of the base. Atlas must make a change first. If atlas asked for approval during its own run and the run pushed nothing, the approval is withdrawn automatically, the thread goes back to `in_progress` and you get a notice.
+
+**"The agent is still pushing its changes".** Atlas requested approval during its run and the push has not finished. Try again in a moment; the commit is pinned when the run ends.
+
+**Run failed on checkout or push.** The run shows `checkout of fh/THR-0001 failed` or `pushing fh/THR-0001 failed`, and the usual retry rules apply. Check that the staging path exists and that the agent's token is current (`fh agent token` invalidates the old one).
+
+**A message to a busy thread does nothing yet.** Only one run per thread runs at a time; the next one starts when the current one ends.
+
+See also: [CLI reference](../reference/cli.md), [console API](../reference/console-api.md), [ADR 0007](../adr/0007-runner-handles-git-and-staging-remote.md).

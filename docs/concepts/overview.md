@@ -1,8 +1,8 @@
 # Overview
 
-Forgehall is a small system around one idea: each agent is the official Claude Code CLI, and Forgehall supplies everything the CLI does not have: a shared message bus, routing, a queue, usage tracking and (planned) approvals and learning.
+Forgehall is a small system around one idea: each agent is the official Claude Code CLI, and Forgehall supplies everything the CLI does not have: a shared message bus, routing, a queue, usage tracking, git staging with approvals and (planned) learning.
 
-Legend: **[now]** is implemented in phase 1, **[planned]** is not built yet.
+Legend: **[now]** is implemented, **[planned]** is not built yet.
 
 ## Architecture
 
@@ -29,13 +29,17 @@ flowchart LR
 
 ## The five pieces
 
-1. **Bus [now]**. The single source of truth. It stores workspaces, agents, threads, messages, runs and run events in Postgres. It exposes MCP tools to agents and a small HTTP API to runners. See [MCP tools](../reference/mcp-tools.md) and [Runner API](../reference/runner-api.md).
+1. **Bus [now]**. The single source of truth. It stores workspaces, agents, threads, messages, runs and run events in Postgres. It exposes MCP tools to agents, a small HTTP API to runners, the console API, and git smart HTTP for the staging remotes of registered repositories. See [MCP tools](../reference/mcp-tools.md), [Runner API](../reference/runner-api.md) and [Console API](../reference/console-api.md).
 2. **Dispatcher [now, inside the bus]**. Turns messages into runs, chooses model and effort with the [router](model-routing-and-limits.md), and applies queue priority and concurrency. Today the concurrency cap is per workspace (`MAX_RUNNING`).
-3. **Runner [now]**. A daemon, one per agent. It claims a run, executes the engine in a per-thread directory, forwards the event stream, and reports session id, tokens, cost and usage when the run ends. Phase 1 runs on the host; a Docker image is the remaining phase 1 item.
+3. **Runner [now]**. A daemon, one per agent. It claims a run, executes the engine in a per-thread directory (for repository threads, a checkout of the thread branch; the runner commits and pushes afterwards, agents never run git), forwards the event stream, and reports session id, tokens, cost and usage when the run ends. Phase 1 runs on the host; a Docker image is the remaining phase 1 item.
 4. **Claude Code CLI [now]**. The engine. Forgehall does not implement an agent loop. See [ADR 0001](../adr/0001-claude-code-cli-as-engine.md).
-5. **Console [planned]**. A web UI over the bus for threads, approvals and activity. The `packages/console` package is a placeholder today; use the `fh` CLI.
+5. **Console [now]**. A web UI over the bus for threads, branches and diffs, approvals and activity (`packages/console`). The `fh` CLI covers the same operations except deciding approvals.
 
-Only the bus (with dispatcher), runner and console are code we write. Repository provider adapters (`packages/providers`) are planned.
+Only the bus (with dispatcher), runner and console are code we write. Repository provider adapters for GitHub and Azure DevOps (`packages/providers`) are planned; the `local` provider (any git URL or path) is built into the bus.
+
+## Git in one paragraph
+
+Agents edit files and never run git. The bus hosts a staging remote per repository; the runner pushes each thread's work to a `fh/<thread>` branch there; when you approve, the bus merges the pinned commit and publishes it to the upstream. Details: [Workspaces](workspaces.md#repositories-and-the-staging-remote), [Threads and messages](threads-and-messages.md#repository-threads-and-approvals), [ADR 0007](../adr/0007-runner-handles-git-and-staging-remote.md).
 
 ## Why the Claude Code CLI is the engine
 

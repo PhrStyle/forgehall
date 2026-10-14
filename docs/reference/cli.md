@@ -6,7 +6,7 @@
 alias fh="node packages/bus/dist/cli.js"
 ```
 
-Status: **implemented (phase 1)**. The CLI is also exposed as the `fh` bin of `@forgehall/bus`. See [threads and messages](../concepts/threads-and-messages.md) for the thread states.
+Status: **implemented**. The CLI is also exposed as the `fh` bin of `@forgehall/bus`. See [threads and messages](../concepts/threads-and-messages.md) for the thread states.
 
 Run `fh help` (or `fh` with no arguments) for a short usage text. Errors print a message and exit with code 1.
 
@@ -57,7 +57,33 @@ Issues a new bearer token for the agent and prints it once. Any previous token s
 AGENT_TOKEN=$(fh agent token personal vigil) node packages/runner/dist/index.js
 ```
 
-### `fh send <ws> <agent> <text...> [--title <title>] [--severity <s>]`
+### `fh repo add <ws> <id> <upstream> [--base <branch>]`
+
+Registers a repository in a workspace (provider `local`) and creates its staging remote at `$FORGEHALL_HOME/staging/<ws>/<id>.git`. Running it again for the same id updates the upstream and base branch and refreshes the staging remote.
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `<id>` | required | Short name, for example `checkout-app` |
+| `<upstream>` | required | Any git URL or path that `git push` can write to; approved work is published here |
+| `--base <branch>` | `main` | Branch that approved work is merged into |
+
+The staging remote is a bare repository seeded from the upstream's base branch, with a hook that accepts only `refs/heads/fh/*` pushes and no deletions. `fh` needs `git` and the same `FORGEHALL_HOME` as the bus. The workspace must exist.
+
+```bash
+fh repo add dev checkout-app /tmp/fh-demo/checkout-app.git --base main
+# repo dev/checkout-app ok · upstream /tmp/fh-demo/checkout-app.git · base main · staging ready
+```
+
+### `fh repos <ws>`
+
+Lists a workspace's repositories: id, provider, base branch, upstream.
+
+```bash
+fh repos dev
+# checkout-app  local  main  /tmp/fh-demo/checkout-app.git
+```
+
+### `fh send <ws> <agent> <text...> [--title <title>] [--severity <s>] [--repo <id>]`
 
 Opens a thread assigned to `<agent>` and posts a `request` from you. This queues a run for the agent.
 
@@ -65,10 +91,13 @@ Opens a thread assigned to `<agent>` and posts a `request` from you. This queues
 |---|---|---|
 | `--title <title>` | first 60 characters of the text | Thread title |
 | `--severity <s>` | none | Free text; the router treats `high` as high severity |
+| `--repo <id>` | none | Bind the thread to a registered repository; it gets the branch `fh/<THREAD-ID>`. See [Work on a repository](../guides/work-on-a-repository.md) |
 
 ```bash
 fh send work atlas "Checkout total is off by one cent with two coupons." --title "Coupon rounding" --severity high
 # THR-0001 opened for atlas
+fh send dev atlas "Fix rounding in total.js" --repo checkout-app
+# THR-0002 opened for atlas
 ```
 
 ### `fh reply <thread> <text...> [--to <agent>] [--type <t>] [--re <message_id>]`
@@ -128,4 +157,6 @@ fh usage work
 
 ## Environment
 
-`DATABASE_URL` selects the database; see [configuration](configuration.md).
+`DATABASE_URL` selects the database and `FORGEHALL_HOME` the data directory (staging remotes); see [configuration](configuration.md).
+
+Approvals are decided in the console or with `POST /api/approvals/:id/decide` ([console API](console-api.md)); there is no `fh` command for it yet.

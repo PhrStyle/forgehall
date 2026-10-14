@@ -1,6 +1,6 @@
 # Learning and data
 
-**Everything on this page is planned.** Phase 1 stores threads, messages, runs and usage in Postgres and nothing else. Agents have no persistent memory or skills managed by Forgehall yet, and there is no backup tooling.
+**Everything on this page is planned**, except that `FORGEHALL_HOME` already holds the git [staging remotes](workspaces.md#repositories-and-the-staging-remote) (`staging/<ws>/<repo>.git`). Phase 1 stores threads, messages, runs and usage in Postgres and nothing else. Agents have no persistent memory or skills managed by Forgehall yet, and there is no backup tooling.
 
 ## Code and data stay apart
 

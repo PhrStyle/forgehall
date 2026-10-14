@@ -2,7 +2,7 @@
 
 Agents see the bus as an MCP server named `bus`, reached at `POST /mcp` with `Authorization: Bearer <agent token>`. The runner configures this for every run (`--mcp-config`, `--strict-mcp-config`), and Claude Code exposes the tools as `mcp__bus__<name>`.
 
-Status: the nine tools below are **implemented (phase 1)**. See the end of this page for **planned** tools.
+Status: the tools below are **implemented**. See the end of this page for **planned** tools.
 
 Common rules:
 
@@ -24,6 +24,7 @@ Opens a new thread asking another agent (or you) for work. Include acceptance cr
 | `title` | string (min 3 chars) | yes | Thread title |
 | `body` | string (min 1) | yes | The request |
 | `severity` | `low` \| `medium` \| `high` | no | `high` can raise a Haiku agent to Sonnet |
+| `repo` | string | no | Id of a registered repository (`fh repos <ws>`). The thread gets its own branch `fh/<THREAD-ID>`; the assignee edits files in a checkout of it. Unknown ids are rejected |
 
 Effect: creates a thread (`open`, moves to `in_progress` when the first run starts), posts a `request`. Rejected if the recipient has `accepts_from` set and the caller is not in it.
 
@@ -88,7 +89,16 @@ Asks the human for a decision. Summarise what was done and how it was verified.
 | `thread_id` | string | yes | |
 | `summary` | string (min 1) | yes | |
 
-Effect: posts an `approval` to `you`; thread becomes `awaiting_approval`. In phase 1 this is only a message; there is no approval record or merge action yet.
+Effect: posts an `approval` to `you`; thread becomes `awaiting_approval`.
+
+On a thread **with a repository**, it also creates an approval record **pinned to a commit**, and you review the branch diff in the console:
+
+- Called when the branch already has commits ahead of the base: pinned to the branch head now.
+- Called during the agent's own run: the edits are not pushed yet, so the commit is pinned when the run finishes and the runner has pushed. If the run pushed nothing, the approval is withdrawn (state `superseded`, thread back to `in_progress`) and you get a notice.
+- Called with nothing to approve (no commits ahead of the base, outside a run): fails with `nothing to approve`.
+- A new request supersedes any earlier pending approval on the thread.
+
+Approving merges the pinned commit into the base branch, publishes it upstream and closes the thread; rejecting sends your comment back as `Changes requested: ...`. The agent cannot call `complete` while the approval is pending. On a thread without a repository this is only a message, and you answer in the thread.
 
 ```json
 {"name": "request_approval", "arguments": {"thread_id": "THR-0001", "summary": "Fixed rounding in coupon stacking; vigil verified 5 of 5 runs passed."}}
@@ -179,5 +189,5 @@ Not implemented; do not rely on them.
 | `prs_list(repo)` | Open pull requests on the provider, including those not from agents |
 | `work_touching(repo, paths[])` | Threads and pull requests that change these files |
 | `request` extras | `acceptance[]` and `attachments[]` parameters |
-| `request_approval` extras | `kind` and `pr_url` parameters |
+| `request_approval` extras | `kind` and `pr_url` parameters (for `pull_request` and `branch_only` policies) |
 | `threads_list` extras | filters by repository and text query |

@@ -2,7 +2,7 @@
 
 Work happens in threads. A thread is a unit of work between agents and you, such as "checkout total bug". It belongs to one workspace, has a state, a responsible agent (the assignee) and an ordered history of messages.
 
-Legend: **[now]** implemented in phase 1, **[planned]** not built yet.
+Legend: **[now]** implemented, **[planned]** not built yet.
 
 ## Message types
 
@@ -15,8 +15,9 @@ Every message has a type, a sender, a recipient (an agent id, or `you` for the h
 | `answer` | Replies to an `ask` or `verify`; for verifications carries `outcome` of `passed` or `failed`. | agent tool `answer`, `fh reply` |
 | `verify` | Asks for an independent check (for example, rerun a reproduction against a branch). | agent tool `verify` |
 | `approval` | Asks the human for a decision. | agent tool `request_approval` |
+| `complete` | Closes a thread (the assignee's summary, or the result of an approval). | agent tool `complete`, approve action |
 | `notify` | Informs without expecting a reply. | agent tool `notify` |
-| `decision` | A decision, for example the human asking for changes. | `fh reply --type decision` |
+| `decision` | A decision, for example the human asking for changes. | `fh reply --type decision`, reject action |
 
 A message addressed to an agent queues a run for it. A message addressed to `you` just waits in the thread.
 
@@ -35,6 +36,8 @@ Transitions are automatic and driven by message type:
 | `verify` posted | `verifying` |
 | `answer` with `outcome=failed` | back to `in_progress` |
 | `approval` posted | `awaiting_approval` |
+| The user approves a repository approval | merged, then `done` (a `complete` message is posted) |
+| The user rejects it with a comment | `in_progress`; the assignee gets a `decision` |
 | `decision` posted (human asks for changes) | `in_progress` |
 | `request` posted while awaiting approval | `in_progress` |
 | `complete` posted by the assignee | `done` |
@@ -46,9 +49,21 @@ Transitions are automatic and driven by message type:
 
 **[planned]** `external_review` (waiting on a reviewer in the provider) and `done` after an approval or a completed pull request.
 
+## Repository threads and approvals
+
+**[now]** A thread can be bound to a repository when it is created (`fh send ... --repo checkout-app`, the console's **Repository** field, the `repo` parameter of the `request` tool). It then has its own branch, `fh/<THREAD-ID>`, for example `fh/THR-0001`.
+
+- **Agents edit files; the runner does git.** Before each run the thread branch is checked out; after a successful run the changes are committed and pushed. Leftovers of a failed run are discarded.
+- **One run per thread at a time**, because agents in a thread share its branch. Further messages wait their turn.
+- **Approvals are pinned to a commit.** `request_approval` records the branch head you are asked to approve. If an agent requests approval during its own run, the commit is pinned when that run ends; if the run pushed nothing, the approval is withdrawn and you are notified. A new request supersedes an older pending one.
+- **Approve** merges that exact commit into the base branch and publishes it upstream, then closes the thread with `Approved and merged into main as <sha>`. It is refused (HTTP 409) if the branch moved after the request or if it conflicts with the base.
+- **Request changes** needs a comment. It reaches the assignee as `Changes requested: ...` and starts a new run on the same branch.
+
+Setup and an example: [Work on a repository](../guides/work-on-a-repository.md). Rationale: [ADR 0007](../adr/0007-runner-handles-git-and-staging-remote.md).
+
 ## The flow: QA finds a bug, dev fixes it, QA verifies, you approve
 
-Phase 1 implements the messaging half (request, ask, answer, verify, approval). Opening pull requests, merging and `work_touching` are planned and marked below.
+Implemented: the messaging half (request, ask, answer, verify, approval), branches per thread and merge on approval for the `local` provider. Pull requests on real providers and `work_touching` are planned and marked below.
 
 ```mermaid
 sequenceDiagram
@@ -63,21 +78,21 @@ sequenceDiagram
   B->>V: run (resume session) with the question
   V->>B: answer("yes, 2 of 5 attempts")
   B->>A: run 2 (resume session) with the answer
-  A-->>A: planned: work_touching, fix on fix/checkout-total, push branch
+  A-->>A: planned: work_touching. Edits files on fh/THR-0001, runner pushes
   A->>B: verify(vigil, "rerun the reproduction on the branch")
-  Note over B: planned: bus opens the pull request so CI runs
+  Note over B: planned: bus opens a pull request so CI runs
   B->>V: run (resume) [verifying]
   V->>B: answer(outcome=passed, evidence)
   A->>B: request_approval(summary)
   B->>H: waits in the thread [awaiting_approval]
   H->>B: approve
-  Note over B: planned: bus merges with its own token [done]
+  Note over B: bus merges into main and pushes upstream [done]
 ```
 
 Rules of the flow:
 
 - **Nobody blocks waiting.** `ask`, `verify` and `request_approval` end the caller's turn. The answer arrives as a new run that resumes the same Claude session. This saves usage and lets agents live in different environments.
-- **Merging is not the agent's job.** Planned: agent credentials on the provider cannot open pull requests or merge; the bus does, after your approval. The barrier is technical, not a prompt instruction.
+- **Merging is not the agent's job.** Agents can only push `fh/*` branches to the staging remote; the bus merges and publishes after your approval. The barrier is technical, not a prompt instruction. (Pull requests on real providers are planned.)
 - Asking for changes is a `decision` message with your comment, which returns the thread to `in_progress`.
 
 ## Who may send what: `accepts_from`

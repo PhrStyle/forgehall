@@ -1,6 +1,6 @@
 # Configuration
 
-## Environment variables (implemented, phase 1)
+## Environment variables (implemented)
 
 There are no config files yet. Everything is read from the environment.
 
@@ -14,8 +14,11 @@ There are no config files yet. Everything is read from the environment.
 | `LOG_LEVEL` | `info` | Fastify logger level |
 | `MAX_RUNNING` | `2` | Maximum runs in progress per workspace |
 | `CLAIM_WAIT_MS` | `25000` | How long a runner's claim request waits for work before returning 204 |
+| `FORGEHALL_HOME` | `~/.forgehall` | Data directory. The bus and `fh` keep staging remotes under `$FORGEHALL_HOME/staging/<workspace>/<repo>.git`. Both must see the same value, and the bus needs `git` installed |
 
 The bus applies pending migrations at startup.
+
+The approval policy is a workspace setting (column `approval_policy`, default `merge`) with no `fh` option to change it yet; only `merge` is implemented.
 
 ### Runner (`packages/runner/dist/index.js`)
 
@@ -34,9 +37,9 @@ The runner's whole environment is inherited by the `claude` process.
 
 None of the following is read by any code today. It shows the intended shape.
 
-### `FORGEHALL_HOME` (planned)
+### More under `FORGEHALL_HOME` (planned)
 
-Data directory, default `~/.forgehall`. See [Learning and data](../concepts/learning-and-data.md).
+Today `FORGEHALL_HOME` only holds `staging/`. The planned per-workspace data repositories live here too. See [Learning and data](../concepts/learning-and-data.md).
 
 ### `config.yaml` (planned)
 

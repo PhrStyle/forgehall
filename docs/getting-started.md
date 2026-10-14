@@ -2,7 +2,7 @@
 
 By the end of this tutorial you will have a local bus and two agents running. You will ask one agent (vigil, QA) a question, watch it ask the other (atlas, dev), and read the result as a thread.
 
-Everything here is **phase 1**. There is no console yet; you drive Forgehall with the `fh` CLI.
+This tutorial drives Forgehall with the `fh` CLI and, at the end, shows the same thread in the web console. To have agents change code in a repository, continue with [Work on a repository](guides/work-on-a-repository.md).
 
 ## Prerequisites
 

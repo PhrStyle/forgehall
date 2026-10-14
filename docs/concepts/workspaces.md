@@ -1,8 +1,8 @@
 # Workspaces
 
-A workspace is an isolated working context, such as `personal` or `work`. It has its own agents, threads, credentials and (planned) repositories, approval policy, memory and Claude account. Nothing crosses from one workspace to another.
+A workspace is an isolated working context, such as `personal` or `work`. It has its own agents, threads, credentials, repositories, approval policy and (planned) memory and Claude account. Nothing crosses from one workspace to another.
 
-Legend: **[now]** implemented in phase 1, **[planned]** not built yet.
+Legend: **[now]** implemented, **[planned]** not built yet.
 
 ## Isolation
 
@@ -27,16 +27,22 @@ An agent belongs to exactly one workspace. In phase 1 it is created with `fh age
 
 ## Provider adapters
 
-**[planned]** Git operations (clone, fetch, push a branch) use plain git over HTTPS or SSH and work with any host. A `RepoProvider` interface covers only what is platform specific: comparing branches, listing and reading pull requests and comments, searching reviewers, creating and merging pull requests.
+Git operations (clone, fetch, push a branch) use plain git and work with any host. A `RepoProvider` interface is planned to cover only what is platform specific: comparing branches, listing and reading pull requests and comments, searching reviewers, creating and merging pull requests.
 
-| Adapter | Planned phase | Notes |
+| Adapter | Status | Notes |
 |---|---|---|
-| `local` | F2 | Bare repository on the host; pull requests simulated on the bus. Lets the whole flow run with no external service. |
-| `azure-devops` | F3 | Azure Repos REST API. |
-| `github` | F3 | REST API, fine-grained token. |
+| `local` | **[now]** | The upstream is any git URL or path that `git push` accepts (for example a bare repository on disk). Approving merges and pushes to it. Register with `fh repo add`. |
+| `azure-devops` | **[planned]** F3 | Azure Repos REST API. |
+| `github` | **[planned]** F3 | REST API, fine-grained token. |
 | others | on demand | Implement the interface. |
 
-**[planned]** Agents never write to the provider. Their provider credential is read-only (for example an Azure DevOps PAT with *Code (Read)*), used to fetch upstream. They push branches to a **staging remote** hosted by the bus on your machine, and other agents fetch from there to verify. Only after your approval does the bus push the branch to the provider with its own write credential and open the pull request. See [ADR 0005](../adr/0005-provider-adapters-and-approval-policies.md).
+### Repositories and the staging remote
+
+**[now]** A workspace registers repositories with `fh repo add <ws> <id> <upstream>`. Each gets a **staging remote**: a bare repository the bus hosts at `$FORGEHALL_HOME/staging/<ws>/<id>.git` and serves over git smart HTTP at `/git/<ws>/<id>.git`. Agents authenticate with their token and reach only their own workspace's repos.
+
+Agents never write to the upstream, and they never run git. The runner checks out a thread's branch from the staging remote before a run and, after a successful one, commits the agent's file changes and pushes them to `fh/<THREAD-ID>`. A `pre-receive` hook accepts only `fh/*` branches and no deletions. Only the bus publishes to the upstream, after your approval. See [ADR 0007](../adr/0007-runner-handles-git-and-staging-remote.md), [ADR 0005](../adr/0005-provider-adapters-and-approval-policies.md) and the how-to [Work on a repository](../guides/work-on-a-repository.md).
+
+**[planned]** A read-only provider credential for agents (for example an Azure DevOps PAT with *Code (Read)*) to fetch from real providers, and other agents fetching a branch from the staging remote to verify it.
 
 ```mermaid
 flowchart LR
@@ -58,17 +64,17 @@ git:
 
 ## Approval policies
 
-**[planned]** Each workspace chooses what "approved" means:
+Each workspace chooses what "approved" means, in the `approval_policy` setting (default `merge`). Only `merge` is implemented.
 
-| Policy | Typical for | When you approve |
-|---|---|---|
-| `merge` | personal | The pull request already exists (the bus opens it when verification is requested so CI runs). Approving merges it. |
-| `pull_request` | work | No pull request yet. You review the branch diff and thread history, edit title and description, and **choose the reviewers at approval time**. Approving makes the bus open the pull request; the real approval then happens with the reviewer on the provider. |
-| `branch_only` | repositories without pull requests | Approving only confirms the pushed branch. The rest is manual. |
+| Policy | Status | Typical for | When you approve |
+|---|---|---|---|
+| `merge` | **[now]** | personal | You review the branch diff. Approving merges the pinned commit into the base branch (no working tree, conflicts are refused) and pushes it to the upstream. With real providers, the pull request is meant to exist earlier so CI runs (planned). |
+| `pull_request` | **[planned]** | work | No pull request yet. You review the branch diff and thread history, edit title and description, and **choose the reviewers at approval time**. Approving makes the bus open the pull request; the real approval then happens with the reviewer on the provider. |
+| `branch_only` | **[planned]** | repositories without pull requests | Approving only confirms the pushed branch. The rest is manual. |
 
 Reviewers are chosen at approval time (rather than fixed in config) because who should review depends on the change. The bus then follows the pull request, and reviewer comments come back to the responsible agent as `decision` messages. Abandoning the pull request cancels the thread.
 
-Today the bus only records an `approval` message and moves the thread to `awaiting_approval`. There is no approval record, no decision command beyond `fh reply`, and no provider.
+**[now]** `request_approval` on a repository thread creates an approval record pinned to the branch head commit. You approve or request changes in the console or with `POST /api/approvals/:id/decide`; there is no `fh` command for it yet. See [Threads and messages](threads-and-messages.md#repository-threads-and-approvals). The `pull_request` and `branch_only` policies return an error if selected.
 
 ## Billing
 

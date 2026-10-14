@@ -8,7 +8,7 @@ Forgehall runs a fixed team of agents (QA, development, research and so on) that
 
 ## Status
 
-Early development. Phase 1 is complete: the bus (Postgres, MCP, runner API, live change stream), the runner (on the host or in Docker), the `fh` CLI and a first web console with live updates. Provider adapters, approval policies, schedules and learning come next. See the [roadmap](docs/concepts/roadmap.md).
+Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with live updates) and phase 2 has started: you can register a git repository, let an agent work on a branch of it, review the diff and approve a merge into your upstream. GitHub and Azure DevOps adapters, pull-request policies, schedules and learning come next. See the [roadmap](docs/concepts/roadmap.md).
 
 ## How it works
 
@@ -21,20 +21,21 @@ Early development. Phase 1 is complete: the bus (Postgres, MCP, runner API, live
 
 ## Features
 
-| Working now (phase 1) | Planned |
+| Working now | Planned |
 |---|---|
-| Postgres-backed bus with threads, messages, runs, run events | Approval policies in the console (`merge`, `pull_request`) |
+| Postgres-backed bus with threads, messages, runs, run events | `pull_request` and `branch_only` approval policies |
 | Web console: team, threads, live run activity, usage, new tasks | Schedules (cron agents) with usage guards |
 | Retries with backoff, blocked threads, stale-run recovery | Agent memory, skills and reflection |
 | MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `complete`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
 | Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
-| Thread state machine driven by message type | Approval records, `merge` / `pull_request` / `branch_only` policies |
-| Deterministic model routing with recorded reason | Repository providers (local, GitHub, Azure DevOps) |
-| Priority queue, per-workspace concurrency cap | Per-account concurrency, preventive pause near limits |
-| Session resume per agent and thread | Multiple Claude accounts per workspace |
-| Real usage read from `rate_limit_event` | Learning branches, reflection, consolidation |
-| `fh` CLI for workspaces, agents, threads, runs, usage | Local git for agent data, daily encrypted backup |
-| Runner executing the Claude Code CLI, on the host or in Docker | Incus VMs, network allowlists |
+| Thread state machine driven by message type | Repository providers (GitHub, Azure DevOps) |
+| Repositories (`fh repo add`): staging remote, a branch per thread, diff review in the console, approval that merges into your upstream (`local` provider, `merge` policy) | Multiple Claude accounts per workspace |
+| Deterministic model routing with recorded reason | Per-account concurrency, preventive pause near limits |
+| Priority queue, per-workspace concurrency cap, one run per thread | Learning branches, reflection, consolidation |
+| Session resume per agent and thread | Local git for agent data, daily encrypted backup |
+| Real usage read from `rate_limit_event` | Incus VMs, network allowlists |
+| `fh` CLI for workspaces, agents, repositories, threads, runs, usage | |
+| Runner executing the Claude Code CLI, on the host or in Docker | |
 
 ## Quickstart
 
@@ -62,7 +63,7 @@ The step-by-step version, with expected output, is in [Getting started](docs/get
 
 ## Security warning
 
-Agents execute model-driven actions and edit files. Treat them like any automation that acts on your behalf, and run them isolated. In phase 1 the runner runs directly on your host, as your user. To limit the damage, the default allowed tools are file tools only (`Read`, `Glob`, `Grep`, `Edit`, `Write`) plus the bus tools, and `Bash` is not allowed by default. File tools can still read and write anything your user can reach, so do not point agents at directories with secrets. Read [SECURITY.md](SECURITY.md) before giving agents more tools.
+Agents execute model-driven actions and edit files. On repository threads they never run git and can only push `fh/*` branches to a staging remote; only the bus publishes to your upstream, after you approve. Treat them like any automation that acts on your behalf, and run them isolated. In phase 1 the runner runs directly on your host, as your user. To limit the damage, the default allowed tools are file tools only (`Read`, `Glob`, `Grep`, `Edit`, `Write`) plus the bus tools, and `Bash` is not allowed by default. File tools can still read and write anything your user can reach, so do not point agents at directories with secrets. Read [SECURITY.md](SECURITY.md) before giving agents more tools.
 
 ## Terms of use and your data
 
@@ -78,7 +79,8 @@ Forgehall is an independent open-source project. It is not affiliated with or en
 - [Documentation index](docs/README.md)
 - [Getting started](docs/getting-started.md) (tutorial)
 - [Architecture overview](docs/concepts/overview.md)
-- [CLI reference](docs/reference/cli.md) and [MCP tools](docs/reference/mcp-tools.md)
+- [Work on a repository](docs/guides/work-on-a-repository.md) (how-to)
+- [CLI reference](docs/reference/cli.md) [MCP tools](docs/reference/mcp-tools.md) and [console API](docs/reference/console-api.md)
 - [Architecture decision records](docs/adr/0000-record-architecture-decisions.md) and [decision log](docs/decisions.md)
 - [Contributing](CONTRIBUTING.md), [Security](SECURITY.md), [Changelog](CHANGELOG.md)
 
