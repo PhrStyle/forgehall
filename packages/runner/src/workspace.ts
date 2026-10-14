@@ -12,16 +12,34 @@ export interface RepoCheckout {
   git: (args: string[]) => Promise<string>;
 }
 
+/** Masks credentials in text that may reach logs, the bus or the console. */
+export const redact = (s: string) => s.replace(/\b(Basic|Bearer) [A-Za-z0-9+/=._~-]+/g, "$1 ***");
+
 /**
  * Agents never run git: the runner checks out the thread branch before a run and commits and
- * pushes the result after it. Credentials go in a per-command header, never into .git/config.
+ * pushes the result after it. Credentials go in a per-command header passed through the
+ * environment, never into .git/config or the command line (which ends up in error messages).
  */
 export async function prepareCheckout(claim: RunClaim, busUrl: string, agentToken: string, workRoot: string): Promise<RepoCheckout> {
   const repo = claim.repo!;
   const dir = join(workRoot, claim.threadId);
   const auth = Buffer.from(`${claim.agentId}:${agentToken}`).toString("base64");
-  const git = async (args: string[], cwd = dir) =>
-    (await exec("git", ["-c", `http.extraHeader=Authorization: Basic ${auth}`, ...args], { cwd, maxBuffer: 32 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } })).stdout;
+  const env = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "http.extraHeader",
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${auth}`,
+  };
+  const git = async (args: string[], cwd = dir) => {
+    try {
+      return (await exec("git", args, { cwd, maxBuffer: 32 * 1024 * 1024, env })).stdout;
+    } catch (e) {
+      // Report git's own reason (stderr), not the command line.
+      const stderr = String((e as { stderr?: string }).stderr ?? "").trim();
+      throw new Error(redact(`git ${args[0]}: ${stderr.split("\n").pop() || (e as Error).message}`));
+    }
+  };
 
   const exists = await access(join(dir, ".git")).then(() => true, () => false);
   if (!exists) {
