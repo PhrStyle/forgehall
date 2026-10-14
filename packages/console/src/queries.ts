@@ -20,3 +20,8 @@ export function useRunsEvents(runs: Run[]) {
     })),
   });
 }
+
+export const useRepos = (ws: string | null) => useQuery({ queryKey: ["repos", ws], queryFn: () => api.repos(ws!), enabled: !!ws, placeholderData: keepPreviousData });
+// Both live under ["thread", id], so every SSE invalidation of the thread refetches them too.
+export const useDiff = (id: string | undefined, enabled: boolean) => useQuery({ queryKey: ["thread", id, "diff"], queryFn: () => api.diff(id!), enabled: !!id && enabled, retry: false });
+export const useApprovals = (id: string | undefined, enabled: boolean) => useQuery({ queryKey: ["thread", id, "approvals"], queryFn: () => api.approvals(id!), enabled: !!id && enabled });

@@ -2,8 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
-import { api, HUMAN, type Message, type MessageType, type Run } from "../api";
-import { useAgents, useThread } from "../queries";
+import { api, HUMAN, type Approval, type BranchDiff, type Message, type MessageType, type Run } from "../api";
+import { useAgents, useApprovals, useDiff, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
@@ -34,6 +34,7 @@ export function ThreadPage() {
   const people = [...new Set(messages.flatMap((m) => [m.from_actor, m.to_actor]))];
   const msgById = new Map(messages.map((m) => [m.id, m]));
   const finished = thread.state === "done";
+  const hasRepo = !!thread.repo_id;
 
   return (
     <>
@@ -45,6 +46,7 @@ export function ThreadPage() {
           <Chip><span className="mono">{thread.id}</span></Chip>
           <h1>{thread.title}</h1>
           <Chip tone={stateTone(thread.state)}>{STATE_LABEL[thread.state]}</Chip>
+          {thread.repo_id && <Chip><span className="mono">{thread.repo_id}{thread.branch ? ` · ${thread.branch}` : ""}</span></Chip>}
           {thread.severity && <Chip tone={thread.severity === "high" ? "err" : thread.severity === "medium" ? "warn" : ""}>{thread.severity}</Chip>}
           <div className="meta">assignee <span className="mono">{thread.assignee ?? "none"}</span> · updated {ago(thread.updated_at)}</div>
           <ThreadActions threadId={thread.id} state={thread.state} canReopen={!!thread.assignee && thread.assignee !== HUMAN} />
@@ -60,6 +62,8 @@ export function ThreadPage() {
       </div>
       <div className="main-body">
         <div className="thread-grid">
+          <div className="main-col">
+          {hasRepo && <ChangesCard threadId={thread.id} />}
           <div className="tl">
             {items.map((it) => it.kind === "run" ? <RunMark key={`r${it.r.id}`} r={it.r} /> : (
               <div key={`m${it.m.id}`} className="tl-item">
@@ -78,9 +82,11 @@ export function ThreadPage() {
             ))}
             {items.length === 0 && <p className="empty">No messages yet.</p>}
           </div>
+          </div>
 
           <div className="side-cards">
-            {thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
+            {hasRepo && <BranchCard threadId={thread.id} />}
+            {hasRepo ? <RepoApprovalCard threadId={thread.id} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
             <div className="card">
               <h3>Runs <span className="mono">{runs.length}</span></h3>
               {runs.length === 0 ? <p className="empty">No runs yet.</p> : (
@@ -224,6 +230,155 @@ function ThreadActions({ threadId, state, canReopen }: { threadId: string; state
       {!closed && <button className="btn sm ghost" onClick={() => setMode("cancel")}>Cancel…</button>}
       {reopenable && canReopen && <button className="btn sm" onClick={() => setMode("reopen")}>Reopen…</button>}
       {err && <ErrorBox error={err} />}
+    </div>
+  );
+}
+
+const short = (sha: string | null | undefined) => (sha ?? "").slice(0, 7);
+
+function BranchCard({ threadId }: { threadId: string }) {
+  const q = useDiff(threadId, true);
+  const d = q.data;
+  const add = d?.files.reduce((n, f) => n + f.additions, 0) ?? 0;
+  const del = d?.files.reduce((n, f) => n + f.deletions, 0) ?? 0;
+  return (
+    <div className="card">
+      <h3>Branch</h3>
+      {q.isLoading && <p className="empty">Loading…</p>}
+      <ErrorBox error={q.error} />
+      {d && (
+        <>
+          <div className="branch-chips"><Chip><span className="mono">{d.branch}</span></Chip><span className="faint">→</span><Chip><span className="mono">{d.base}</span></Chip></div>
+          <div className="kvl" style={{ marginTop: 10 }}>
+            <div><span>Commits</span><b>{d.commits.length}</b></div>
+            <div><span>Files changed</span><b>{d.files.length} <span className="df-add">+{add}</span> <span className="df-del">−{del}</span></b></div>
+          </div>
+          {d.commits.length === 0 ? <p className="empty">No commits on this branch yet.</p> : (
+            <ul className="commits">
+              {d.commits.map((c) => (
+                <li key={c.sha}>
+                  <span className="mono sha">{short(c.sha)}</span>
+                  <span className="subj">{c.subject}<small>{c.author} · {ago(c.date)}</small></span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface FileDiff { path: string; lines: string[]; additions: number; deletions: number }
+
+function splitPatch(patch: string): FileDiff[] {
+  if (!patch) return [];
+  return patch.split(/^(?=diff --git )/m).filter((b) => b.startsWith("diff --git ")).map((block) => {
+    const lines = block.replace(/\n$/, "").split("\n");
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(lines[0] ?? "");
+    let additions = 0, deletions = 0, inHunk = false;
+    for (const l of lines) {
+      if (l.startsWith("@@")) inHunk = true;
+      else if (inHunk && l.startsWith("+")) additions++;
+      else if (inHunk && l.startsWith("-")) deletions++;
+    }
+    return { path: m?.[2] ?? lines[0] ?? "", lines, additions, deletions };
+  });
+}
+
+function lineClass(l: string): string {
+  if (l.startsWith("@@")) return "hunk";
+  if (l.startsWith("+++") || l.startsWith("---") || l.startsWith("diff ") || l.startsWith("index ") || l.startsWith("new file") || l.startsWith("deleted file") || l.startsWith("similarity") || l.startsWith("rename ") || l.startsWith("Binary")) return "meta";
+  if (l.startsWith("+")) return "add";
+  if (l.startsWith("-")) return "del";
+  return "";
+}
+
+function FileBlock({ f, open }: { f: FileDiff; open: boolean }) {
+  return (
+    <details className="dfile" open={open}>
+      <summary><span className="mono path">{f.path}</span><span className="df-add">+{f.additions}</span><span className="df-del">−{f.deletions}</span></summary>
+      <pre className="dpatch">{f.lines.map((l, i) => <span key={i} className={`dl ${lineClass(l)}`}>{l || " "}{"\n"}</span>)}</pre>
+    </details>
+  );
+}
+
+function ChangesCard({ threadId }: { threadId: string }) {
+  const q = useDiff(threadId, true);
+  const files = useMemo(() => splitPatch(q.data?.patch ?? ""), [q.data?.patch]);
+  if (q.isLoading) return null;
+  if (q.error) return <div className="card changes"><h3>Changes</h3><ErrorBox error={q.error} /></div>;
+  const d = q.data as BranchDiff;
+  return (
+    <div className="card changes">
+      <h3>Changes <span className="mono">{d.files.length} file{d.files.length === 1 ? "" : "s"}</span></h3>
+      {files.length === 0 ? <p className="empty">No changes against {d.base} yet.</p> : files.map((f) => <FileBlock key={f.path} f={f} open={files.length <= 3} />)}
+      {d.truncated && <div className="errbox" style={{ marginTop: 8, marginBottom: 0 }}>This diff is too large and was truncated. Review the rest in the repository.</div>}
+    </div>
+  );
+}
+
+const APPROVAL_TONE: Record<Approval["state"], string> = { pending: "warn", approved: "ok", rejected: "err", superseded: "" };
+
+function policyLabel(policy: string, base?: string): string {
+  if (policy === "merge") return `merge into ${base ?? "base"}`;
+  return policy.replace(/_/g, " ");
+}
+
+function RepoApprovalCard({ threadId }: { threadId: string }) {
+  const qc = useQueryClient();
+  const { toast } = useApp();
+  const ap = useApprovals(threadId, true);
+  const diff = useDiff(threadId, true);
+  const [comment, setComment] = useState("");
+  const [bad, setBad] = useState(false);
+  const decide = useMutation({
+    mutationFn: (b: { id: string; decision: "approve" | "reject"; comment?: string }) => api.decide(b.id, { decision: b.decision, ...(b.comment ? { comment: b.comment } : {}) }),
+    onSuccess: (_a, b) => { toast(b.decision === "approve" ? "Approved" : "Changes requested"); setComment(""); setBad(false); },
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["thread", threadId] }),
+  });
+  const list = ap.data ?? [];
+  const [latest, ...older] = list;
+  if (ap.isLoading) return null;
+  if (ap.error) return <div className="card decision"><h3>Approval</h3><ErrorBox error={ap.error} /></div>;
+  if (!latest) return null;
+  const base = diff.data?.base;
+  const pending = latest.state === "pending";
+  const pinning = pending && !latest.head_sha;
+  const moved = pending && !!latest.head_sha && !!diff.data?.headSha && diff.data.headSha !== latest.head_sha;
+
+  return (
+    <div className="card decision">
+      <h3>Approval <Chip tone={APPROVAL_TONE[latest.state]}>{latest.state}</Chip></h3>
+      <div style={{ marginBottom: 8 }}><Chip tone="warn">{policyLabel(latest.policy, base)}</Chip></div>
+      <p className="ap-summary">{latest.summary}</p>
+      <div className="kvl" style={{ marginBottom: 10 }}>
+        <div><span>Requested by</span><b className="mono">{latest.requested_by}</b></div>
+        <div><span>Pinned commit</span><b className="mono">{latest.head_sha ? short(latest.head_sha) : <span className="faint">pinning when the run ends…</span>}</b></div>
+      </div>
+      {moved && <div className="warnbox">The branch has new commits since approval was requested ({short(latest.head_sha)} → {short(diff.data?.headSha)}). Approving will be refused; ask the agent to request approval again.</div>}
+      {pending && (
+        <>
+          <textarea className={bad ? "bad" : ""} value={comment} onChange={(e) => { setComment(e.target.value); setBad(false); }} placeholder="Comment (required to request changes)" />
+          {bad && <div className="errmsg">Say what should change.</div>}
+          <ErrorBox error={decide.error} />
+          <div className="acts">
+            <button className="btn primary" disabled={pinning || decide.isPending} title={pinning ? "Waiting for the agent's run to end" : undefined} onClick={() => decide.mutate({ id: latest.id, decision: "approve", ...(comment.trim() ? { comment: comment.trim() } : {}) })}>{decide.isPending ? "Working…" : `Approve and merge`}</button>
+            <button className="btn" disabled={decide.isPending} onClick={() => { if (!comment.trim()) return setBad(true); decide.mutate({ id: latest.id, decision: "reject", comment: comment.trim() }); }}>Request changes</button>
+          </div>
+        </>
+      )}
+      {latest.state === "approved" && <p className="ap-result">{latest.result?.merged ? <>Merged into {base ?? "base"} as <span className="mono">{short(latest.result.merged)}</span></> : "Approved."}{latest.comment ? <span className="muted"> · {latest.comment}</span> : null}</p>}
+      {latest.state === "rejected" && <p className="ap-result">Changes requested{latest.comment ? <>: <span className="muted">{latest.comment}</span></> : ""}</p>}
+      {latest.state === "superseded" && <p className="ap-result muted">Superseded{latest.comment ? `: ${latest.comment}` : ""}</p>}
+      {older.length > 0 && (
+        <details className="ap-hist">
+          <summary>History ({older.length})</summary>
+          <ul>{older.map((a) => (
+            <li key={a.id}><Chip tone={APPROVAL_TONE[a.state]}>{a.state}</Chip><span className="mono">{short(a.head_sha) || "—"}</span><span className="faint">{ago(a.decided_at ?? a.created_at)}</span>{a.comment && <span className="muted subj">{a.comment}</span>}</li>
+          ))}</ul>
+        </details>
+      )}
     </div>
   );
 }

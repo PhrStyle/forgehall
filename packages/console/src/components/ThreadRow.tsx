@@ -12,6 +12,7 @@ export function ThreadRow({ t }: { t: ThreadOverview }) {
           <b>{t.title}</b>
           <Chip tone={stateTone(t.state)}>{STATE_LABEL[t.state]}</Chip>
           {t.severity && <Chip tone={t.severity === "high" ? "err" : t.severity === "medium" ? "warn" : ""}>{t.severity}</Chip>}
+          {t.repo_id && <Chip><span className="mono">{t.repo_id}{t.branch ? ` · ${t.branch}` : ""}</span></Chip>}
           {t.waiting_on_you && <span className="wmark">● waiting on you</span>}
         </div>
         <div className="t2">

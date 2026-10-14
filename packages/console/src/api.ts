@@ -34,6 +34,35 @@ export interface ThreadOverview {
   message_count: number;
   participants: string[] | null;
   waiting_on_you: boolean;
+  repo_id?: string | null;
+  branch?: string | null;
+}
+
+export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: string; base_branch: string }
+
+export interface BranchDiff {
+  base: string;
+  branch: string;
+  baseSha: string | null;
+  headSha: string | null;
+  commits: { sha: string; author: string; date: string; subject: string }[];
+  files: { path: string; additions: number; deletions: number }[];
+  patch: string;
+  truncated: boolean;
+}
+
+export interface Approval {
+  id: string;
+  thread_id: string;
+  policy: string;
+  requested_by: string;
+  summary: string;
+  head_sha: string | null;
+  state: "pending" | "approved" | "rejected" | "superseded";
+  comment: string | null;
+  result: { merged?: string } | null;
+  created_at: string;
+  decided_at: string | null;
 }
 
 export interface Message {
@@ -105,11 +134,16 @@ export const api = {
   workspaces: () => request<Workspace[]>("/api/workspaces"),
   agents: (ws: string) => request<AgentOverview[]>(`/api/workspaces/${enc(ws)}/agents`),
   threads: (ws: string) => request<ThreadOverview[]>(`/api/workspaces/${enc(ws)}/threads`),
+  repos: (ws: string) => request<RepoRow[]>(`/api/workspaces/${enc(ws)}/repos`),
+  diff: (id: string) => request<BranchDiff>(`/api/threads/${enc(id)}/diff`),
+  approvals: (id: string) => request<Approval[]>(`/api/threads/${enc(id)}/approvals`),
+  decide: (id: string, b: { decision: "approve" | "reject"; comment?: string }) =>
+    request<Approval>(`/api/approvals/${enc(id)}/decide`, { method: "POST", body: JSON.stringify(b) }),
   runs: (ws: string, limit = 50) => request<Run[]>(`/api/workspaces/${enc(ws)}/runs?limit=${limit}`),
   usage: (ws: string) => request<Usage>(`/api/workspaces/${enc(ws)}/usage`),
   thread: (id: string) => request<ThreadDetail>(`/api/threads/${enc(id)}`),
   runEvents: (id: string | number, after = 0) => request<RunEvent[]>(`/api/runs/${id}/events?after=${after}`),
-  createThread: (b: { workspace: string; to: string; title: string; body: string; severity?: string }) =>
+  createThread: (b: { workspace: string; to: string; title: string; body: string; severity?: string; repo?: string }) =>
     request<{ id: string }>("/api/threads", { method: "POST", body: JSON.stringify(b) }),
   postMessage: (threadId: string, b: { to: string; type: MessageType; body: string; replyTo?: string }) =>
     request<Message>(`/api/threads/${enc(threadId)}/messages`, { method: "POST", body: JSON.stringify(b) }),

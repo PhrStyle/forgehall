@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../context";
 import { api } from "../api";
-import { useAgents } from "../queries";
+import { useAgents, useRepos } from "../queries";
 import { ErrorBox } from "../ui";
 
 export function NewTaskModal() {
@@ -15,6 +15,8 @@ export function NewTaskModal() {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [severity, setSeverity] = useState("");
+  const [repo, setRepo] = useState("");
+  const repos = useRepos(app.workspace);
   const first = useRef<HTMLSelectElement>(null);
   useEffect(() => first.current?.focus(), []);
   useEffect(() => {
@@ -25,7 +27,7 @@ export function NewTaskModal() {
   const assignee = to || agents[0]?.id || "";
 
   const m = useMutation({
-    mutationFn: () => api.createThread({ workspace: app.workspace!, to: assignee, title: title.trim(), body: body.trim(), ...(severity ? { severity } : {}) }),
+    mutationFn: () => api.createThread({ workspace: app.workspace!, to: assignee, title: title.trim(), body: body.trim(), ...(severity ? { severity } : {}), ...(repo ? { repo } : {}) }),
     onSuccess: (t) => {
       void qc.invalidateQueries({ queryKey: ["threads"] });
       void qc.invalidateQueries({ queryKey: ["agents"] });
@@ -57,6 +59,14 @@ export function NewTaskModal() {
           <select value={severity} onChange={(e) => setSeverity(e.target.value)}>
             <option value="">Not set</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High (may route to a stronger model)</option>
           </select>
+        </label>
+        <label className="field">Repository
+          <select value={repo} onChange={(e) => setRepo(e.target.value)}>
+            <option value="">None</option>
+            {(repos.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.base_branch}</option>)}
+          </select>
+          {repos.data && repos.data.length === 0 && <span className="faint">Add one with <code>fh repo add {app.workspace} &lt;id&gt; &lt;upstream&gt;</code></span>}
+          {repo && <span className="faint">The agent works on its own branch; you review and merge it from the thread.</span>}
         </label>
         <ErrorBox error={m.error} />
         <div className="row-end">
