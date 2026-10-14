@@ -66,7 +66,7 @@ Agents execute model-driven actions and edit files. Treat them like any automati
 
 ## Terms of use and your data
 
-Forgehall is an independent open-source project. It is not affiliated with or endorsed by Anthropic.
+Forgehall is an independent open-source project. It is not affiliated with or endorsed by Anthropic. The notes below reflect Anthropic's terms as reviewed on 2026-10-14; terms change, and it is up to each user to check that their use still complies. The project will be updated when changes affect how it works.
 
 - **Your own login, the official CLI.** Every agent runs the unmodified Claude Code CLI, signed in with *your own* Claude account (interactive login or `claude setup-token`). Forgehall never asks for, stores or transmits Claude credentials. Do not share, pool or resell accounts or tokens.
 - **Follow your plan's terms.** Pro and Max are governed by Anthropic's Consumer Terms, Team and Enterprise by the Commercial Terms, and all by the [Usage Policy](https://www.anthropic.com/legal/aup). Anthropic states that subscription limits assume ordinary, individual usage; keep the number of agents and schedules proportionate. You are responsible for what your agents do.
