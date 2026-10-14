@@ -142,6 +142,16 @@ fh reply THR-0001 "Thanks. Please check the same with two items in the cart." --
 
 This queues another vigil run on the same thread, resuming its session.
 
+## Watch it in the console
+
+With the bus running, start the web console in another terminal:
+
+```bash
+pnpm --filter @forgehall/console dev
+```
+
+Open <http://localhost:5173>. You will see your agents and their status, the thread `THR-0001` with its messages and runs in order, and each agent's live activity (tool calls, messages sent over the bus, cost and duration). You can also send a new task and answer in the thread from there. Memory, Skills, Environment and Versions on an agent page are previews with sample data.
+
 ## Stop everything
 
 ```bash

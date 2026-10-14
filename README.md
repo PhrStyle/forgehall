@@ -2,13 +2,13 @@
 
 A self-hosted team of persistent Claude Code agents that talk to each other, learn, and wait for your approval.
 
-<!-- screenshot: console (coming with phase 3) -->
+![Forgehall console: a thread where the QA agent asks the developer agent a question and reports back, with each run, model and cost](docs/assets/console-thread.png)
 
 Forgehall runs a fixed team of agents (QA, development, research and so on) that you define per workspace, such as `personal` and `work`. Agents exchange messages through their own bus, so work is organised as threads with a history instead of loose chat. Each message wakes the right agent with the official Claude Code CLI, using a model chosen for that task. Anything that matters, such as merging code or saving something to an agent's memory, waits for a human decision. It runs on your machine, with your own Claude subscription.
 
 ## Status
 
-Early development. Phase 1 works: the bus (Postgres, MCP, runner API), the runner and the `fh` CLI. The web console, provider adapters, approvals, learning and the Docker runner image are not built yet. See the [roadmap](docs/concepts/roadmap.md).
+Early development. Phase 1 is complete: the bus (Postgres, MCP, runner API, live change stream), the runner (on the host or in Docker), the `fh` CLI and a first web console with live updates. Provider adapters, approval policies, schedules and learning come next. See the [roadmap](docs/concepts/roadmap.md).
 
 ## How it works
 
@@ -23,7 +23,9 @@ Early development. Phase 1 works: the bus (Postgres, MCP, runner API), the runne
 
 | Working now (phase 1) | Planned |
 |---|---|
-| Postgres-backed bus with threads, messages, runs, run events | Web console (React) with live activity and approvals |
+| Postgres-backed bus with threads, messages, runs, run events | Approval policies in the console (`merge`, `pull_request`) |
+| Web console: team, threads, live run activity, usage, new tasks | Schedules (cron agents) with usage guards |
+| Retries with backoff, blocked threads, stale-run recovery | Agent memory, skills and reflection |
 | MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
 | Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
 | Thread state machine driven by message type | Approval records, `merge` / `pull_request` / `branch_only` policies |
@@ -32,7 +34,7 @@ Early development. Phase 1 works: the bus (Postgres, MCP, runner API), the runne
 | Session resume per agent and thread | Multiple Claude accounts per workspace |
 | Real usage read from `rate_limit_event` | Learning branches, reflection, consolidation |
 | `fh` CLI for workspaces, agents, threads, runs, usage | Local git for agent data, daily encrypted backup |
-| Runner executing the Claude Code CLI on the host | Runner Docker image, then Incus VMs |
+| Runner executing the Claude Code CLI, on the host or in Docker | Incus VMs, network allowlists |
 
 ## Quickstart
 
@@ -51,7 +53,10 @@ AGENT_TOKEN=$(fh agent token dev vigil) node packages/runner/dist/index.js &
 AGENT_TOKEN=$(fh agent token dev atlas) node packages/runner/dist/index.js &
 fh send dev vigil "Ask atlas (ask tool) whether the checkout bug happens without a coupon, then answer me."
 fh thread THR-0001
+pnpm --filter @forgehall/console dev                                 # web console on http://localhost:5173
 ```
+
+Open <http://localhost:5173> to watch the team, threads and live runs in the console.
 
 The step-by-step version, with expected output, is in [Getting started](docs/getting-started.md).
 
