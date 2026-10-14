@@ -30,3 +30,30 @@ export async function readAccountToken(id: string): Promise<string | null> {
 export async function removeAccountToken(id: string): Promise<void> {
   await rm(accountTokenPath(id), { force: true });
 }
+
+/**
+ * The bus's write credential on a host (GitHub, Azure DevOps), per workspace. Same rules as
+ * Claude tokens: a 0600 file, never in the database, never returned by the API, never given to agents.
+ */
+export const providerTokenPath = (workspaceId: string, provider: string) => join(forgehallHome(), "secrets", "providers", workspaceId, `${provider}.token`);
+
+export async function writeProviderToken(workspaceId: string, provider: string, token: string): Promise<void> {
+  const dir = join(forgehallHome(), "secrets", "providers", workspaceId);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(join(forgehallHome(), "secrets"), 0o700).catch(() => {});
+  await chmod(join(forgehallHome(), "secrets", "providers"), 0o700).catch(() => {});
+  await writeFile(providerTokenPath(workspaceId, provider), token + "\n", { mode: 0o600 });
+  await chmod(providerTokenPath(workspaceId, provider), 0o600);
+}
+
+export async function readProviderToken(workspaceId: string, provider: string): Promise<string | null> {
+  try {
+    return (await readFile(providerTokenPath(workspaceId, provider), "utf8")).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeProviderToken(workspaceId: string, provider: string): Promise<void> {
+  await rm(providerTokenPath(workspaceId, provider), { force: true });
+}

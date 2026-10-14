@@ -7,7 +7,7 @@ RUN corepack enable
 WORKDIR /src
 COPY . .
 RUN pnpm install --frozen-lockfile \
- && pnpm --filter @forgehall/bus --filter @forgehall/runner... build \
+ && pnpm --filter @forgehall/bus... --filter @forgehall/runner... build \
  && pnpm --filter @forgehall/bus deploy --prod --legacy /out/bus \
  && pnpm --filter @forgehall/runner deploy --prod --legacy /out/runner
 

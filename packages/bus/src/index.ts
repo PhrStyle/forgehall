@@ -31,7 +31,14 @@ async function main() {
       (e) => app.log.error(e, "stale run check failed"),
     );
   }, 30_000);
-  app.addHook("onClose", async () => clearInterval(reaper));
+  // Pull requests the bus opened: their threads close when the host reports them merged.
+  const prPoll = setInterval(() => {
+    store.pollPullRequests().catch((e) => app.log.error(e, "pull request check failed"));
+  }, Number(process.env.PR_POLL_SECONDS ?? 120) * 1000);
+  app.addHook("onClose", async () => {
+    clearInterval(reaper);
+    clearInterval(prPoll);
+  });
   if (applied.length) app.log.info({ applied }, "migrations applied");
   const port = Number(process.env.PORT ?? 4545);
   // On the host: loopback only. In the stack container HOST=0.0.0.0, published only to the host's

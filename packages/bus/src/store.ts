@@ -4,8 +4,9 @@ import type postgres from "postgres";
 import type { Sql } from "./db.js";
 
 type Tx = Sql | postgres.TransactionSql;
-import { branchDiff, ensureStaging, MergeConflictError, mergeAndPublish, revParse, stagingPath, threadBranch } from "./git.js";
-import { readAccountToken, removeAccountToken, writeAccountToken } from "./accounts.js";
+import { createProvider, detectProvider, gitAuthHeader, parseRepoUrl, ProviderError, stripCredentials, type ProviderKind, type Reviewer } from "@forgehall/providers";
+import { branchDiff, ensureStaging, MergeConflictError, publishBranch, publishToBase, revParse, squashApproved, stagingPath, syncBase, threadBranch, type UpstreamAuth } from "./git.js";
+import { readAccountToken, readProviderToken, removeAccountToken, removeProviderToken, writeAccountToken, writeProviderToken } from "./accounts.js";
 import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
@@ -54,6 +55,36 @@ export interface RepoRow {
   base_branch: string;
 }
 
+export type ApprovalPolicy = "merge" | "pull_request" | "branch_only";
+export const APPROVAL_POLICIES: readonly ApprovalPolicy[] = ["merge", "pull_request", "branch_only"];
+export const HOST_PROVIDERS = ["github", "azure-devops"] as const;
+export type HostProvider = (typeof HOST_PROVIDERS)[number];
+
+/** What publishing an approval produced. */
+export interface ApprovalResult {
+  /** Policy merge: the commit now at the head of the base branch. */
+  merged?: string;
+  /** Policies pull_request and branch_only: the published branch and commit. */
+  branch?: string;
+  commit?: string;
+  pr?: { id: string; url: string; status: "open" | "merged" | "closed" };
+  warnings?: string[];
+}
+
+export interface Publishing {
+  approval_policy: ApprovalPolicy;
+  git_author_name: string | null;
+  git_author_email: string | null;
+  ai_trailer: boolean;
+  credentials: { provider: HostProvider; token_hint: string; created_at: Date }[];
+}
+
+/** Masks credentials in text that may reach logs or the console. */
+const redactAuth = (text: string) => text.replace(/\b(Basic|Bearer) [A-Za-z0-9+/=._~-]+/g, "$1 ***");
+
+export const AI_TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>";
+const DEFAULT_AUTHOR = { name: "Forgehall", email: "forgehall@localhost" };
+
 export interface ApprovalRow {
   id: string;
   workspace_id: string;
@@ -64,7 +95,7 @@ export interface ApprovalRow {
   head_sha: string | null;
   state: "pending" | "approved" | "rejected" | "superseded";
   comment: string | null;
-  result: { merged?: string } | null;
+  result: ApprovalResult | null;
   created_at: Date;
   decided_at: Date | null;
 }
@@ -497,9 +528,17 @@ export class Store {
 
   async upsertRepo(r: { workspaceId: string; id: string; upstreamUrl: string; base?: string; provider?: string }): Promise<RepoRow> {
     const base = r.base ?? "main";
-    await ensureStaging(r.workspaceId, r.id, r.upstreamUrl, base);
+    // Credentials never live in the URL: the bus adds its own token when it talks to the host.
+    let upstreamUrl = stripCredentials(r.upstreamUrl);
+    const provider = (r.provider ?? detectProvider(upstreamUrl)) as ProviderKind;
+    if (provider !== "local") {
+      const ref = parseRepoUrl(upstreamUrl);
+      // The bus authenticates with a token over HTTPS; it has no SSH keys.
+      if (ref.provider === "github" && /^git@/.test(upstreamUrl)) upstreamUrl = `https://github.com/${ref.owner}/${ref.repo}.git`;
+    }
+    await ensureStaging(r.workspaceId, r.id, upstreamUrl, base, await this.upstreamAuth(r.workspaceId, provider));
     const [row] = await this.sql<RepoRow[]>`INSERT INTO repos (workspace_id, id, upstream_url, provider, base_branch)
-      VALUES (${r.workspaceId}, ${r.id}, ${r.upstreamUrl}, ${r.provider ?? "local"}, ${base})
+      VALUES (${r.workspaceId}, ${r.id}, ${upstreamUrl}, ${provider}, ${base})
       ON CONFLICT (workspace_id, id) DO UPDATE SET upstream_url = EXCLUDED.upstream_url, provider = EXCLUDED.provider, base_branch = EXCLUDED.base_branch
       RETURNING *`;
     return row!;
@@ -562,7 +601,21 @@ export class Store {
    * the base branch, publish it upstream and close the thread. Reject: the comment goes back to
    * the assignee, who gets a new run.
    */
-  async decideApproval(approvalId: number, decision: "approve" | "reject", comment: string | null): Promise<ApprovalRow> {
+  /**
+   * The user decides on a pending approval. Reject: the comment goes back to the assignee, who
+   * gets a new run. Approve: the bus squashes the pinned commit onto the base branch with the
+   * workspace's commit identity and publishes it according to the policy:
+   * - merge: the commit becomes the base branch upstream; the thread closes.
+   * - branch_only: the commit is pushed as the thread branch upstream; the thread closes.
+   * - pull_request: the branch is pushed and a pull request opened with the chosen reviewers; the
+   *   thread waits in external_review until the host reports it merged or closed.
+   */
+  async decideApproval(
+    approvalId: number,
+    decision: "approve" | "reject",
+    comment: string | null,
+    opts: { reviewers?: string[]; title?: string } = {},
+  ): Promise<ApprovalRow> {
     const [a] = await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`;
     if (!a) throw new BusError(`approval ${approvalId} not found`);
     if (a.state !== "pending") throw new BusError(`approval ${approvalId} is already ${a.state}`);
@@ -577,21 +630,171 @@ export class Store {
     }
 
     if (!a.head_sha) throw new BusError("the agent is still pushing its changes; try again in a moment");
-    if (a.policy !== "merge") throw new BusError(`policy ${a.policy} is not available yet; only merge is implemented`);
+    const policy = a.policy as ApprovalPolicy;
+    if (!APPROVAL_POLICIES.includes(policy)) throw new BusError(`unknown approval policy ${a.policy}`);
     const { repo, staging, branch } = await this.threadRepo(t);
-    let merged: string;
+    const pub = await this.publishing(t.workspace_id);
+    const title = opts.title?.trim() || t.title;
+    if (policy === "pull_request" && repo.provider === "local") {
+      throw new BusError(`repo ${repo.id} is a local repository: pull requests need GitHub or Azure DevOps. Change the workspace policy to merge or branch_only.`);
+    }
+    const auth = await this.upstreamAuth(t.workspace_id, repo.provider as ProviderKind);
+    if (policy === "pull_request" && !auth) throw new BusError(`no ${repo.provider} credential for workspace ${t.workspace_id}: add one in Settings → Publishing`);
+
+    const author = { name: pub.git_author_name || DEFAULT_AUTHOR.name, email: pub.git_author_email || DEFAULT_AUTHOR.email };
+    const message = [title, a.summary.trim(), pub.ai_trailer ? AI_TRAILER : ""].filter(Boolean).join("\n\n");
+    let result: ApprovalResult;
+    let note: string;
     try {
-      merged = await mergeAndPublish(staging, repo.base_branch, branch, a.head_sha, `Merge ${branch}: ${t.title}`, { name: "Forgehall", email: "forgehall@localhost" });
+      const commit = await squashApproved(staging, repo.base_branch, branch, a.head_sha, message, author, auth);
+      if (policy === "merge") {
+        await publishToBase(staging, repo.base_branch, commit, auth);
+        result = { merged: commit };
+        note = `Approved and merged into ${repo.base_branch} as ${commit.slice(0, 7)}.`;
+      } else {
+        await publishBranch(staging, branch, commit, auth);
+        result = { branch, commit };
+        note = `Approved and pushed to ${branch} as ${commit.slice(0, 7)}.`;
+        if (policy === "pull_request") {
+          const provider = createProvider(parseRepoUrl(repo.upstream_url), (await readProviderToken(t.workspace_id, repo.provider))!);
+          const pr = await provider.createPullRequest({
+            source: branch, target: repo.base_branch, title,
+            description: [a.summary.trim(), `Thread ${t.id}.`].join("\n\n"),
+            reviewerIds: opts.reviewers ?? [],
+          });
+          result = { branch, commit, pr: { id: pr.id, url: pr.url, status: "open" }, ...(pr.warnings?.length ? { warnings: pr.warnings } : {}) };
+          note = `Approved: pull request ${pr.id} opened for review (${pr.url}).${pr.warnings?.length ? ` Warnings: ${pr.warnings.join("; ")}` : ""}`;
+        }
+      }
     } catch (e) {
-      if (e instanceof MergeConflictError) throw new BusError(e.message);
+      if (e instanceof MergeConflictError || e instanceof ProviderError) throw new BusError(e.message);
+      throw new BusError(`publishing failed: ${redactAuth((e as Error).message.split("\n").slice(-2).join(" "))}`);
+    }
+
+    await this.sql`UPDATE approvals SET state = 'approved', comment = ${comment}, decided_at = now(), result = ${this.sql.json(result as never)} WHERE id = ${approvalId}`;
+    const body = `${note}${comment?.trim() ? ` ${comment.trim()}` : ""}`;
+    if (result.pr) {
+      // The real review happens on the host: tell the assignee without waking it, and wait.
+      await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "notify", from: HUMAN, to: assignee, body });
+      await this.setThreadState(t, "external_review");
+    } else {
+      await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: HUMAN, to: assignee, body });
+    }
+    return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
+  }
+
+  private async setThreadState(t: ThreadRow, state: ThreadState): Promise<void> {
+    await this.sql.begin(async (tx) => {
+      await tx`UPDATE threads SET state = ${state}, updated_at = now() WHERE id = ${t.id}`;
+      await notify(tx, { kind: "thread", workspace: t.workspace_id, thread: t.id });
+    });
+  }
+
+  /**
+   * Checks the pull requests the bus opened and closes their threads when the host reports them
+   * merged, or hands them back to the user when closed without merging. Called periodically.
+   */
+  async pollPullRequests(): Promise<number> {
+    const open = await this.sql<ApprovalRow[]>`SELECT * FROM approvals
+      WHERE state = 'approved' AND result ? 'pr' AND result->'pr'->>'status' = 'open'`;
+    let changed = 0;
+    for (const a of open) {
+      try {
+        const t = (await this.thread(a.thread_id))!;
+        const { repo, staging } = await this.threadRepo(t);
+        const token = await readProviderToken(t.workspace_id, repo.provider);
+        if (!token) continue;
+        const status = await createProvider(parseRepoUrl(repo.upstream_url), token).pullRequestStatus(a.result!.pr!.id);
+        if (status === "open") continue;
+        const result: ApprovalResult = { ...a.result!, pr: { ...a.result!.pr!, status } };
+        await this.sql`UPDATE approvals SET result = ${this.sql.json(result as never)} WHERE id = ${a.id}`;
+        changed++;
+        if (t.state !== "external_review") continue;
+        const assignee = t.assignee && t.assignee !== HUMAN ? t.assignee : a.requested_by;
+        if (status === "merged") {
+          // Bring staging's base up to date so later threads start from the merged code.
+          await syncBase(staging, repo.base_branch, await this.upstreamAuth(t.workspace_id, repo.provider as ProviderKind)).catch(() => {});
+          await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: SYSTEM, to: assignee, body: `Pull request ${a.result!.pr!.id} was merged on ${repo.provider}.` });
+        } else {
+          await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "notify", from: SYSTEM, to: HUMAN, body: `Pull request ${a.result!.pr!.id} was closed without merging. Reopen the thread with instructions, or close it.` });
+          await this.setThreadState(t, "blocked");
+        }
+      } catch (e) {
+        console.error(`[bus] checking pull request of approval ${a.id}: ${redactAuth((e as Error).message)}`);
+      }
+    }
+    return changed;
+  }
+
+  // ---------- publishing settings ----------
+
+  async publishing(workspaceId: string): Promise<Publishing> {
+    const [w] = await this.sql<{ approval_policy: ApprovalPolicy; git_author_name: string | null; git_author_email: string | null; ai_trailer: boolean }[]>`
+      SELECT approval_policy, git_author_name, git_author_email, ai_trailer FROM workspaces WHERE id = ${workspaceId}`;
+    if (!w) throw new BusError(`workspace ${workspaceId} not found`);
+    const credentials = await this.sql<Publishing["credentials"]>`SELECT provider, token_hint, created_at FROM provider_credentials
+      WHERE workspace_id = ${workspaceId} ORDER BY provider`;
+    return { ...w, credentials: [...credentials] };
+  }
+
+  async updatePublishing(
+    workspaceId: string,
+    p: { approval_policy?: string; git_author_name?: string | null; git_author_email?: string | null; ai_trailer?: boolean },
+  ): Promise<Publishing> {
+    const cur = await this.publishing(workspaceId);
+    const policy = p.approval_policy ?? cur.approval_policy;
+    if (!APPROVAL_POLICIES.includes(policy as ApprovalPolicy)) throw new BusError(`approval_policy must be one of ${APPROVAL_POLICIES.join(", ")}`);
+    const clean = (v: string | null | undefined, old: string | null) => (v === undefined ? old : v?.trim() || null);
+    const name = clean(p.git_author_name, cur.git_author_name);
+    const email = clean(p.git_author_email, cur.git_author_email);
+    if (name && (name.length > 100 || /[<>\n]/.test(name))) throw new BusError("git_author_name must be a plain name");
+    if (email && !/^[^\s@<>]+@[^\s@<>]+$/.test(email)) throw new BusError("git_author_email must be an e-mail address");
+    const trailer = p.ai_trailer ?? cur.ai_trailer;
+    await this.sql`UPDATE workspaces SET approval_policy = ${policy}, git_author_name = ${name}, git_author_email = ${email}, ai_trailer = ${trailer}
+      WHERE id = ${workspaceId}`;
+    return this.publishing(workspaceId);
+  }
+
+  async setProviderCredential(workspaceId: string, provider: string, raw: string): Promise<Publishing["credentials"][number]> {
+    if (!HOST_PROVIDERS.includes(provider as HostProvider)) throw new BusError(`provider must be one of ${HOST_PROVIDERS.join(", ")}`);
+    await this.publishing(workspaceId);
+    const token = raw.replace(/\s+/g, "");
+    if (token.length < 20) throw new BusError("that does not look like an access token");
+    await writeProviderToken(workspaceId, provider, token);
+    const [row] = await this.sql<Publishing["credentials"]>`INSERT INTO provider_credentials (workspace_id, provider, token_hint)
+      VALUES (${workspaceId}, ${provider}, ${token.slice(-4)})
+      ON CONFLICT (workspace_id, provider) DO UPDATE SET token_hint = EXCLUDED.token_hint, created_at = now()
+      RETURNING provider, token_hint, created_at`;
+    return row!;
+  }
+
+  async deleteProviderCredential(workspaceId: string, provider: string): Promise<void> {
+    if (!HOST_PROVIDERS.includes(provider as HostProvider)) throw new BusError(`provider must be one of ${HOST_PROVIDERS.join(", ")}`);
+    await this.sql`DELETE FROM provider_credentials WHERE workspace_id = ${workspaceId} AND provider = ${provider}`;
+    await removeProviderToken(workspaceId, provider);
+  }
+
+  /** The git header the bus uses with a host, or undefined (local repos, or no credential: public read only). */
+  private async upstreamAuth(workspaceId: string, provider: ProviderKind): Promise<UpstreamAuth> {
+    if (provider === "local") return undefined;
+    const token = await readProviderToken(workspaceId, provider);
+    return token ? gitAuthHeader(provider, token) : undefined;
+  }
+
+  /** Reviewer search for a thread's pull request, through the repo's host. */
+  async reviewers(threadId: string, query: string): Promise<Reviewer[]> {
+    const t = await this.thread(threadId);
+    if (!t) throw new BusError(`thread ${threadId} not found`);
+    const { repo } = await this.threadRepo(t);
+    if (repo.provider === "local") throw new BusError(`repo ${repo.id} is local: it has no reviewers`);
+    const token = await readProviderToken(t.workspace_id, repo.provider);
+    if (!token) throw new BusError(`no ${repo.provider} credential for workspace ${t.workspace_id}: add one in Settings → Publishing`);
+    try {
+      return await createProvider(parseRepoUrl(repo.upstream_url), token).searchReviewers(query.trim());
+    } catch (e) {
+      if (e instanceof ProviderError) throw new BusError(e.message);
       throw e;
     }
-    await this.sql`UPDATE approvals SET state = 'approved', comment = ${comment}, decided_at = now(), result = ${this.sql.json({ merged })} WHERE id = ${approvalId}`;
-    await this.postMessage({
-      workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: HUMAN, to: assignee,
-      body: `Approved and merged into ${repo.base_branch} as ${merged.slice(0, 7)}.${comment?.trim() ? ` ${comment.trim()}` : ""}`,
-    });
-    return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
   }
 
   // ---------- Claude accounts ----------

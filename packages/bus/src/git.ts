@@ -16,8 +16,17 @@ export const stagingPath = (workspaceId: string, repoId: string) => join(staging
 /** Branch that holds a thread's work. */
 export const threadBranch = (threadId: string) => `fh/${threadId}`;
 
-export async function git(repo: string, args: string[], input?: string): Promise<string> {
-  const child = exec("git", ["-C", repo, ...args], { maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+/**
+ * The bus's credential for an upstream on a host: the value of git's http.extraHeader. It goes
+ * through the environment, never the command line, so it cannot leak into error messages.
+ */
+export type UpstreamAuth = string | undefined;
+
+const authEnv = (auth: UpstreamAuth): Record<string, string> =>
+  auth ? { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: auth } : {};
+
+export async function git(repo: string, args: string[], input?: string, auth?: UpstreamAuth): Promise<string> {
+  const child = exec("git", ["-C", repo, ...args], { maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...authEnv(auth) } });
   if (input !== undefined) child.child.stdin?.end(input);
   const { stdout } = await child;
   return stdout;
@@ -40,7 +49,7 @@ done
  * Creates (or refreshes) the staging remote for a repo: a bare clone of the upstream base
  * branch with a hook that only accepts thread branches.
  */
-export async function ensureStaging(workspaceId: string, repoId: string, upstreamUrl: string, base: string): Promise<string> {
+export async function ensureStaging(workspaceId: string, repoId: string, upstreamUrl: string, base: string, auth?: UpstreamAuth): Promise<string> {
   const path = stagingPath(workspaceId, repoId);
   await mkdir(path, { recursive: true });
   await exec("git", ["init", "--bare", "--quiet", path]);
@@ -49,7 +58,7 @@ export async function ensureStaging(workspaceId: string, repoId: string, upstrea
   const remotes = (await git(path, ["remote"])).split("\n");
   if (!remotes.includes("upstream")) await git(path, ["remote", "add", "upstream", upstreamUrl]);
   else await git(path, ["remote", "set-url", "upstream", upstreamUrl]);
-  await syncBase(path, base);
+  await syncBase(path, base, auth);
   await git(path, ["symbolic-ref", "HEAD", `refs/heads/${base}`]);
   const hook = join(path, "hooks", "pre-receive");
   await writeFile(hook, PRE_RECEIVE);
@@ -58,8 +67,8 @@ export async function ensureStaging(workspaceId: string, repoId: string, upstrea
 }
 
 /** Brings the staging base branch up to date with upstream (humans may have merged things). */
-export async function syncBase(stagingRepo: string, base: string): Promise<void> {
-  await git(stagingRepo, ["fetch", "--quiet", "upstream", `+refs/heads/${base}:refs/heads/${base}`]);
+export async function syncBase(stagingRepo: string, base: string, auth?: UpstreamAuth): Promise<void> {
+  await git(stagingRepo, ["fetch", "--quiet", "upstream", `+refs/heads/${base}:refs/heads/${base}`], undefined, auth);
 }
 
 export async function revParse(repo: string, ref: string): Promise<string | null> {
@@ -107,19 +116,27 @@ export async function branchDiff(stagingRepo: string, base: string, branch: stri
 
 export class MergeConflictError extends Error {}
 
+export interface CommitIdentity {
+  name: string;
+  email: string;
+}
+
 /**
- * Merges a thread branch into the base branch without a working tree and publishes the
- * result upstream. Fails on conflicts instead of resolving them.
+ * Squashes an approved thread branch onto the current base branch, without a working tree: one
+ * commit whose parent is the base, authored with the workspace identity. Published history then
+ * shows the workspace's author instead of the agents. Fails on conflicts instead of resolving
+ * them, and if the branch moved after the approval was requested.
  */
-export async function mergeAndPublish(
+export async function squashApproved(
   stagingRepo: string,
   base: string,
   branch: string,
   expectedHead: string,
   message: string,
-  author: { name: string; email: string },
+  author: CommitIdentity,
+  auth?: UpstreamAuth,
 ): Promise<string> {
-  await syncBase(stagingRepo, base);
+  await syncBase(stagingRepo, base, auth);
   const head = await revParse(stagingRepo, branch);
   if (head !== expectedHead) throw new MergeConflictError(`the branch changed after approval was requested (${expectedHead.slice(0, 7)} → ${head?.slice(0, 7)})`);
   let tree: string;
@@ -129,9 +146,20 @@ export async function mergeAndPublish(
     throw new MergeConflictError(`the branch conflicts with ${base}; ask the agent to update it. ${(e as { stdout?: string }).stdout?.split("\n").slice(1, 6).join(" ") ?? ""}`);
   }
   const env = { GIT_AUTHOR_NAME: author.name, GIT_AUTHOR_EMAIL: author.email, GIT_COMMITTER_NAME: author.name, GIT_COMMITTER_EMAIL: author.email };
-  const { stdout } = await exec("git", ["-C", stagingRepo, "commit-tree", tree, "-p", base, "-p", branch, "-m", message], { env: { ...process.env, ...env } });
-  const merged = stdout.trim();
-  await git(stagingRepo, ["push", "--quiet", "upstream", `${merged}:refs/heads/${base}`]);
-  await git(stagingRepo, ["update-ref", `refs/heads/${base}`, merged]);
-  return merged;
+  const { stdout } = await exec("git", ["-C", stagingRepo, "commit-tree", tree, "-p", base, "-m", message], { env: { ...process.env, ...env } });
+  return stdout.trim();
+}
+
+/** Publishes the squashed commit as the new base branch upstream (policy merge). */
+export async function publishToBase(stagingRepo: string, base: string, commit: string, auth?: UpstreamAuth): Promise<void> {
+  await git(stagingRepo, ["push", "--quiet", "upstream", `${commit}:refs/heads/${base}`], undefined, auth);
+  await git(stagingRepo, ["update-ref", `refs/heads/${base}`, commit]);
+}
+
+/**
+ * Publishes the squashed commit as a branch upstream (policies pull_request and branch_only).
+ * Forced: the branch belongs to the thread, and a later approval replaces what an earlier one pushed.
+ */
+export async function publishBranch(stagingRepo: string, branch: string, commit: string, auth?: UpstreamAuth): Promise<void> {
+  await git(stagingRepo, ["push", "--quiet", "upstream", `+${commit}:refs/heads/${branch}`], undefined, auth);
 }

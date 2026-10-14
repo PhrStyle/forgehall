@@ -68,10 +68,37 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
 
   app.get<{ Params: { id: string } }>("/api/threads/:id/approvals", async (req) => store.approvals(req.params.id));
 
-  const Decide = z.object({ decision: z.enum(["approve", "reject"]), comment: z.string().optional() });
+  const Decide = z.object({
+    decision: z.enum(["approve", "reject"]),
+    comment: z.string().optional(),
+    reviewers: z.array(z.string().min(1).max(200)).max(20).optional(),
+    title: z.string().max(200).optional(),
+  });
   app.post<{ Params: { id: string } }>("/api/approvals/:id/decide", async (req) => {
     const d = Decide.parse(req.body);
-    return store.decideApproval(Number(req.params.id), d.decision, d.comment ?? null);
+    return store.decideApproval(Number(req.params.id), d.decision, d.comment ?? null, { reviewers: d.reviewers, title: d.title });
+  });
+  app.get<{ Params: { id: string }; Querystring: { q?: string } }>("/api/threads/:id/reviewers", async (req) =>
+    store.reviewers(req.params.id, (req.query.q ?? "").slice(0, 100)),
+  );
+
+  // Publishing: approval policy, commit identity, and the bus's write credential per host.
+  app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/publishing", async (req) => store.publishing(req.params.ws));
+  const PublishingPatch = z.object({
+    approval_policy: z.enum(["merge", "pull_request", "branch_only"]).optional(),
+    git_author_name: z.string().max(100).nullable().optional(),
+    git_author_email: z.string().max(200).nullable().optional(),
+    ai_trailer: z.boolean().optional(),
+  });
+  app.patch<{ Params: { ws: string } }>("/api/workspaces/:ws/publishing", async (req) =>
+    store.updatePublishing(req.params.ws, PublishingPatch.parse(req.body)),
+  );
+  app.put<{ Params: { ws: string; provider: string } }>("/api/workspaces/:ws/credentials/:provider", async (req) =>
+    store.setProviderCredential(req.params.ws, req.params.provider, z.object({ token: z.string().min(1).max(2000) }).parse(req.body).token),
+  );
+  app.delete<{ Params: { ws: string; provider: string } }>("/api/workspaces/:ws/credentials/:provider", async (req, reply) => {
+    await store.deleteProviderCredential(req.params.ws, req.params.provider);
+    return reply.code(204).send();
   });
 
   const NewThread = z.object({

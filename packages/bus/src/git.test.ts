@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { beforeEach, describe, expect, it } from "vitest";
-import { branchDiff, ensureStaging, MergeConflictError, mergeAndPublish, revParse, stagingPath } from "./git.js";
+import { branchDiff, ensureStaging, MergeConflictError, publishBranch, publishToBase, revParse, squashApproved, stagingPath } from "./git.js";
 
 const exec = promisify(execFile);
 const sh = async (cwd: string, ...args: string[]) =>
@@ -66,26 +66,51 @@ describe("branchDiff", () => {
   });
 });
 
-describe("mergeAndPublish", () => {
-  const author = { name: "Forgehall", email: "forgehall@localhost" };
+describe("publishing an approved branch", () => {
+  const author = { name: "Dana Reyes", email: "dana@example.com" };
+  const squashAndMerge = async (branch: string, head: string, message: string) => {
+    const c = await squashApproved(staging, "main", branch, head, message, author);
+    await publishToBase(staging, "main", c);
+    return c;
+  };
 
-  it("merges the approved commit and publishes it upstream", async () => {
-    const head = await agentCommit("fh/THR-0001", "a.txt", "one\nmore\n");
-    const merged = await mergeAndPublish(staging, "main", "fh/THR-0001", head, "Merge fh/THR-0001", author);
-    expect(await revParse(upstream, "main")).toBe(merged);
+  it("squashes the approved commits into one commit by the workspace author and publishes it", async () => {
+    await agentCommit("fh/THR-0001", "a.txt", "one\nmore\n");
+    const head = await agentCommit("fh/THR-0001", "b.txt", "two\nmore\n", "fh/THR-0001");
+    const c = await squashAndMerge("fh/THR-0001", head, "Add more\n\nCo-Authored-By: Claude <noreply@anthropic.com>");
+    expect(await revParse(upstream, "main")).toBe(c);
     expect(await sh(root, "--git-dir", upstream, "show", "main:a.txt")).toBe("one\nmore");
+    expect(await sh(root, "--git-dir", upstream, "show", "main:b.txt")).toBe("two\nmore");
+    const [who, parents] = (await sh(root, "--git-dir", upstream, "log", "-1", "--format=%an <%ae>%x1f%P", "main")).split("\x1f");
+    expect(who).toBe("Dana Reyes <dana@example.com>");
+    expect(parents!.split(" ")).toHaveLength(1);
+    expect(await sh(root, "--git-dir", upstream, "log", "-1", "--format=%B", "main")).toContain("Co-Authored-By: Claude");
+  });
+
+  it("publishes a branch without touching the base branch", async () => {
+    const before = await revParse(upstream, "main");
+    const head = await agentCommit("fh/THR-0001", "a.txt", "one\nmore\n");
+    const c = await squashApproved(staging, "main", "fh/THR-0001", head, "Add more", author);
+    await publishBranch(staging, "fh/THR-0001", c);
+    expect(await revParse(upstream, "fh/THR-0001")).toBe(c);
+    expect(await revParse(upstream, "main")).toBe(before);
+    // A later approval replaces the published branch.
+    const next = await agentCommit("fh/THR-0001", "b.txt", "two\nlater\n", "fh/THR-0001");
+    const c2 = await squashApproved(staging, "main", "fh/THR-0001", next, "Add more and later", author);
+    await publishBranch(staging, "fh/THR-0001", c2);
+    expect(await revParse(upstream, "fh/THR-0001")).toBe(c2);
   });
 
   it("refuses when the branch moved after approval was requested", async () => {
     const approved = await agentCommit("fh/THR-0001", "a.txt", "one\nmore\n");
     await agentCommit("fh/THR-0001", "b.txt", "two\nlater\n", "fh/THR-0001");
-    await expect(mergeAndPublish(staging, "main", "fh/THR-0001", approved, "m", author)).rejects.toThrow(MergeConflictError);
+    await expect(squashApproved(staging, "main", "fh/THR-0001", approved, "m", author)).rejects.toThrow(MergeConflictError);
   });
 
   it("refuses conflicting changes instead of resolving them", async () => {
     const first = await agentCommit("fh/THR-0001", "a.txt", "first\n");
-    await mergeAndPublish(staging, "main", "fh/THR-0001", first, "m1", author);
+    await squashAndMerge("fh/THR-0001", first, "m1");
     const second = await agentCommit("fh/THR-0002", "a.txt", "second\n", "main~1");
-    await expect(mergeAndPublish(staging, "main", "fh/THR-0002", second, "m2", author)).rejects.toThrow(/conflicts/);
+    await expect(squashApproved(staging, "main", "fh/THR-0002", second, "m2", author)).rejects.toThrow(/conflicts/);
   });
 });
