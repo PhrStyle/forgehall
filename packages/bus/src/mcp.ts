@@ -159,6 +159,9 @@ export function busMcpServer(store: Store, me: AgentRow, opts: McpOptions = { pe
         const t = await threadInWs(thread_id);
         if (t.assignee !== me.id) throw new BusError(`only the assignee (${t.assignee ?? "nobody"}) can complete ${thread_id}; tell them with notify`);
         if (t.state === "awaiting_approval") throw new BusError(`${thread_id} is waiting for the user's approval; it closes when the user decides`);
+        if (t.repo_id && (await store.threadDiff(thread_id)).commits.length > 0) {
+          throw new BusError(`${t.branch} has changes the user has not approved; call request_approval instead of complete`);
+        }
         const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "complete", from: me.id, to: HUMAN, body: summary });
         return ok(`Thread ${thread_id} completed (message ${m.id}).`);
       }),

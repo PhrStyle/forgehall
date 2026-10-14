@@ -129,7 +129,7 @@ Closes a thread when the work is finished and nothing waits on anyone.
 | `thread_id` | string | yes | |
 | `summary` | string (min 3) | yes | Outcome in a sentence or two; shown to the user |
 
-Only the thread's assignee can complete it, and not while it is `awaiting_approval` (the user's decision closes it). Effect: posts a `complete` message to the user, moves the thread to `done` and cancels any queued runs on it.
+Only the thread's assignee can complete it, and not while it is `awaiting_approval` (the user's decision closes it). On a thread with a repository, `complete` is refused while the branch has commits that are not in the base branch: call `request_approval` instead. If the agent completes in the same run that produced the changes (before they are pushed), the bus turns the completion into an approval request when the run ends. Effect: posts a `complete` message to the user, moves the thread to `done` and cancels any queued runs on it.
 
 ```json
 {"name": "complete", "arguments": {"thread_id": "THR-0006", "summary": "Answered: the bug also happens without a coupon (2 of 5 runs)."}}

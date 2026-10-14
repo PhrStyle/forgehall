@@ -72,4 +72,10 @@ describe("buildPrompt", () => {
     expect(p).toContain('<message id="8" type="ask" from="atlas">');
     expect(p).toContain("thread_id: THR-0001");
   });
+
+  it("asks for approval instead of complete when the thread has a repository", () => {
+    const withRepo = { ...thread, repo_id: "checkout-app", branch: "fh/THR-0001" } as ThreadRow;
+    expect(buildPrompt({ agent, thread: withRepo, messages: [], resumed: true })).toContain("call request_approval");
+    expect(buildPrompt({ agent, thread, messages: [], resumed: true })).not.toContain("request_approval");
+  });
 });

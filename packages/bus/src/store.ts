@@ -268,8 +268,10 @@ export class Store {
     const [waiting] = await tx`SELECT id FROM runs WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'queued'`;
     if (waiting) return;
     const [agent] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${thread.workspace_id} AND id = ${agentId}`;
+    // Only failures since the last success count: one bad patch must not pin a thread to Opus.
     const failures = (await tx<{ failures: number }[]>`SELECT count(*)::int AS failures FROM runs
-      WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'failed'`)[0]!.failures;
+      WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'failed'
+        AND id > coalesce((SELECT max(id) FROM runs WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'done'), 0)`)[0]!.failures;
     const r = route({
       trigger,
       agentDefault: agent!.default_model,
@@ -383,7 +385,33 @@ export class Store {
       }
       await this.afterRun(tx, { workspaceId: agent.workspace_id, agentId: agent.id, threadId: run.thread_id, runId, ok: f.ok, error: f.error });
       await this.pinApprovals(tx, run.thread_id, agent.id);
+      await this.approvalForCompletedChanges(tx, run.thread_id, agent.id);
     });
+  }
+
+  /**
+   * An agent may complete a thread during the same run that produced its changes, before they are
+   * pushed, so the complete tool cannot see them. If the run left unmerged commits on a thread it
+   * completed, the completion becomes an approval request: changes never close without the user.
+   */
+  private async approvalForCompletedChanges(tx: Tx, threadId: string, agentId: string): Promise<void> {
+    const [t] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${threadId}`;
+    if (!t || t.state !== "done" || !t.repo_id) return;
+    const [last] = await tx<{ type: string; from_actor: string; body: string }[]>`SELECT type, from_actor, body FROM messages
+      WHERE thread_id = ${threadId} ORDER BY created_at DESC, id DESC LIMIT 1`;
+    if (last?.type !== "complete" || last.from_actor !== agentId) return;
+    const { repo, staging, branch } = await this.threadRepo(t);
+    const diff = await branchDiff(staging, repo.base_branch, branch);
+    if (!diff.headSha || diff.commits.length === 0) return;
+    const [ws] = await tx<{ approval_policy: string }[]>`SELECT approval_policy FROM workspaces WHERE id = ${t.workspace_id}`;
+    await tx`UPDATE approvals SET state = 'superseded' WHERE thread_id = ${threadId} AND state = 'pending'`;
+    await tx`INSERT INTO approvals (workspace_id, thread_id, policy, requested_by, summary, head_sha)
+      VALUES (${t.workspace_id}, ${threadId}, ${ws!.approval_policy}, ${agentId}, ${last.body}, ${diff.headSha})`;
+    await tx`UPDATE threads SET state = 'awaiting_approval', updated_at = now() WHERE id = ${threadId}`;
+    const [msg] = await tx<{ id: string }[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body)
+      VALUES (${t.workspace_id}, ${threadId}, 'notify', ${SYSTEM}, ${HUMAN}, ${`${agentId} completed the thread with changes on ${branch} that are not in ${repo.base_branch} yet. Review and approve them to merge.`}) RETURNING id`;
+    await notify(tx, { kind: "message", workspace: t.workspace_id, thread: threadId, message: msg!.id });
+    await notify(tx, { kind: "thread", workspace: t.workspace_id, thread: threadId });
   }
 
   /**
@@ -575,9 +603,12 @@ export class Store {
 
   /** Saves a subscription token (file, 0600) and its metadata. API keys are refused: they bill per token. */
   async addAccount(a: { id: string; label: string; plan: string; token: string }): Promise<AccountRow> {
-    const token = a.token.trim();
+    // Tokens have no whitespace; terminals wrap long ones, so a pasted token can carry line breaks.
+    const token = a.token.replace(/\s+/g, "");
     if (/^sk-ant-api/i.test(token)) throw new BusError("This is an API key, which is billed per token. Use a subscription token from `claude setup-token`.");
-    if (token.length < 20 || /\s/.test(token)) throw new BusError("That does not look like a token from `claude setup-token`.");
+    if (!/^sk-ant-oat\d+-[\w-]{20,}$/.test(token)) {
+      throw new BusError("That does not look like a token from `claude setup-token`: it starts with sk-ant-oat01- and has only letters, digits, - and _. Paste just the token line.");
+    }
     await writeAccountToken(a.id, token);
     const [row] = await this.sql<AccountRow[]>`INSERT INTO claude_accounts (id, label, plan, token_hint)
       VALUES (${a.id}, ${a.label}, ${a.plan}, ${token.slice(-4)})
