@@ -1,6 +1,7 @@
 import {
   ProviderError,
   type FetchLike,
+  type MergeResult,
   type NewPullRequest,
   type ProviderKind,
   type PullRequestRef,
@@ -98,8 +99,26 @@ export function createProvider(
   ref: RepoRef,
   token: string,
   fetchImpl: FetchLike = globalThis.fetch as unknown as FetchLike,
+  options: ProviderOptions = {},
 ): RepoProvider {
-  return ref.provider === "github" ? new GitHubProvider(ref, token, fetchImpl) : new AzureDevOpsProvider(ref, token, fetchImpl);
+  return ref.provider === "github"
+    ? new GitHubProvider(ref, token, fetchImpl)
+    : new AzureDevOpsProvider(ref, token, fetchImpl, options.sleep ?? defaultSleep);
+}
+
+export interface ProviderOptions {
+  /** Delay between polls while Azure DevOps completes a merge; tests pass a no-op. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const MAX_AZURE_DESCRIPTION = 4000;
+const MERGE_POLLS = 20;
+const MERGE_POLL_DELAY_MS = 1500;
+
+function movedBranch(host: string): ProviderError {
+  return new ProviderError(`the pull request's branch changed on ${host}; ask for approval again`, 409);
 }
 
 const SCOPE_HINT =
@@ -200,6 +219,53 @@ class GitHubProvider implements RepoProvider {
     if (data.merged_at || data.merged === true) return "merged";
     return data.state === "closed" ? "closed" : "open";
   }
+
+  async updatePullRequest(id: string, pr: { title: string; description: string }): Promise<void> {
+    await this.request(`/pulls/${encodeURIComponent(id)}`, "PATCH", { title: pr.title, body: pr.description });
+  }
+
+  async closePullRequest(id: string): Promise<void> {
+    await this.request(`/pulls/${encodeURIComponent(id)}`, "PATCH", { state: "closed" });
+  }
+
+  async mergePullRequest(id: string, opts: { headCommit: string; message: string }): Promise<MergeResult> {
+    const host = hostOf(this.ref.apiBase) ?? "the host";
+    const path = `/pulls/${encodeURIComponent(id)}`;
+    const pr = asRecord(await this.request(path));
+    if (pr.merged_at || pr.merged === true) return { mergeCommit: String(pr.merge_commit_sha ?? "") };
+    if (pr.state === "closed") throw new ProviderError(`the pull request is closed on ${host}; it cannot be merged`);
+    const headRef = typeof asRecord(pr.head).ref === "string" ? (asRecord(pr.head).ref as string) : "";
+
+    const attempt = async (body: Record<string, unknown>) => {
+      try {
+        return asRecord(await this.request(`${path}/merge`, "PUT", body));
+      } catch (err) {
+        if (err instanceof ProviderError && err.status === 409) throw movedBranch(host);
+        throw err;
+      }
+    };
+    let result: Record<string, unknown>;
+    try {
+      result = await attempt({ merge_method: "rebase", sha: opts.headCommit });
+    } catch (err) {
+      if (!(err instanceof ProviderError) || err.status !== 405) throw err;
+      const nl = opts.message.indexOf("\n");
+      const title = (nl === -1 ? opts.message : opts.message.slice(0, nl)).trim();
+      const rest = nl === -1 ? "" : opts.message.slice(nl + 1).trim();
+      result = await attempt({ merge_method: "squash", sha: opts.headCommit, commit_title: title, commit_message: rest });
+    }
+    if (typeof result.sha !== "string" || result.merged === false) {
+      throw new ProviderError(`${host} did not merge the pull request${typeof result.message === "string" ? `: ${result.message}` : ""}`);
+    }
+    if (headRef) {
+      try {
+        await this.request(`/git/refs/heads/${headRef.split("/").map(encodeURIComponent).join("/")}`, "DELETE");
+      } catch {
+        // best effort: the merge already happened
+      }
+    }
+    return { mergeCommit: result.sha };
+  }
 }
 
 class AzureDevOpsProvider implements RepoProvider {
@@ -207,6 +273,7 @@ class AzureDevOpsProvider implements RepoProvider {
     readonly ref: RepoRef,
     private readonly token: string,
     private readonly fetchImpl: FetchLike,
+    private readonly sleep: (ms: number) => Promise<void> = defaultSleep,
   ) {}
 
   private get project(): string {
@@ -301,5 +368,61 @@ class AzureDevOpsProvider implements RepoProvider {
     const data = asRecord(await call(this.fetchImpl, this.token, `${this.repoApi}/pullrequests/${encodeURIComponent(id)}?api-version=7.1`, { headers: this.headers }));
     if (data.status === "completed") return "merged";
     return data.status === "abandoned" ? "closed" : "open";
+  }
+
+  private prUrl(id: string): string {
+    return `${this.repoApi}/pullrequests/${encodeURIComponent(id)}?api-version=7.1`;
+  }
+
+  async updatePullRequest(id: string, pr: { title: string; description: string }): Promise<void> {
+    await call(this.fetchImpl, this.token, this.prUrl(id), {
+      method: "PATCH",
+      headers: this.headers,
+      body: { title: pr.title, description: pr.description.slice(0, MAX_AZURE_DESCRIPTION) },
+    });
+  }
+
+  async closePullRequest(id: string): Promise<void> {
+    await call(this.fetchImpl, this.token, this.prUrl(id), { method: "PATCH", headers: this.headers, body: { status: "abandoned" } });
+  }
+
+  async mergePullRequest(id: string, opts: { headCommit: string; message: string }): Promise<MergeResult> {
+    const host = hostOf(this.ref.apiBase) ?? "the host";
+    let data: Record<string, unknown>;
+    try {
+      data = asRecord(
+        await call(this.fetchImpl, this.token, this.prUrl(id), {
+          method: "PATCH",
+          headers: this.headers,
+          body: {
+            status: "completed",
+            lastMergeSourceCommit: { commitId: opts.headCommit },
+            completionOptions: { mergeStrategy: "rebase", deleteSourceBranch: true, mergeCommitMessage: opts.message },
+          },
+        }),
+      );
+    } catch (err) {
+      if (err instanceof ProviderError && (err.status === 409 || err.status === 400) && /commit|source/i.test(err.message)) throw movedBranch(host);
+      throw err;
+    }
+    for (let attempt = 0; ; attempt++) {
+      const status = data.status;
+      const mergeStatus = typeof data.mergeStatus === "string" ? data.mergeStatus : "unknown";
+      if (status === "completed") {
+        const commit = asRecord(data.lastMergeCommit).commitId;
+        return { mergeCommit: typeof commit === "string" ? commit : "" };
+      }
+      if (status === "abandoned") throw new ProviderError("Azure DevOps did not complete the merge: the pull request was abandoned");
+      if (mergeStatus === "conflicts") throw new ProviderError("Azure DevOps did not complete the merge: conflicts");
+      if (mergeStatus === "rejectedByPolicy") {
+        throw new ProviderError("Azure DevOps did not complete the merge: rejected by a branch policy (required reviewers or builds)");
+      }
+      if (mergeStatus === "failure") throw new ProviderError("Azure DevOps did not complete the merge: the merge failed");
+      if (attempt >= MERGE_POLLS) {
+        throw new ProviderError(`Azure DevOps has not completed the merge yet (mergeStatus: ${mergeStatus}); check the pull request`);
+      }
+      await this.sleep(MERGE_POLL_DELAY_MS);
+      data = asRecord(await call(this.fetchImpl, this.token, this.prUrl(id), { headers: this.headers }));
+    }
   }
 }

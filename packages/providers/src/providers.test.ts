@@ -254,3 +254,130 @@ describe("errors", () => {
     }
   });
 });
+
+describe("pull request update, merge and close", () => {
+  const noSleep = async () => {};
+  const open = { state: "open", head: { ref: "fh/t1" } };
+
+  it("GitHub updates and closes", async () => {
+    const { calls, fetchImpl } = fakeFetch([{ status: 200, body: {} }, { status: 200, body: {} }]);
+    const p = createProvider(ghRef, TOKEN, fetchImpl);
+    await p.updatePullRequest("7", { title: "T2", description: "D2" });
+    await p.closePullRequest("7");
+    expect(calls[0]!.url).toBe("https://api.github.com/repos/acme/checkout-app/pulls/7");
+    expect(calls[0]!.method).toBe("PATCH");
+    expect(JSON.parse(calls[0]!.body!)).toEqual({ title: "T2", body: "D2" });
+    expect(calls[1]!.method).toBe("PATCH");
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ state: "closed" });
+  });
+
+  it("GitHub merges with rebase, then deletes the branch", async () => {
+    const { calls, fetchImpl } = fakeFetch([
+      { status: 200, body: open },
+      { status: 200, body: { sha: "abc123", merged: true } },
+      { status: 204, body: "" },
+    ]);
+    const res = await createProvider(ghRef, TOKEN, fetchImpl).mergePullRequest("7", { headCommit: "h1", message: "T\n\nbody" });
+    expect(res).toEqual({ mergeCommit: "abc123" });
+    expect(calls.map((c) => c.method ?? "GET")).toEqual(["GET", "PUT", "DELETE"]);
+    expect(calls[1]!.url).toBe("https://api.github.com/repos/acme/checkout-app/pulls/7/merge");
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ merge_method: "rebase", sha: "h1" });
+    expect(calls[2]!.url).toBe("https://api.github.com/repos/acme/checkout-app/git/refs/heads/fh/t1");
+  });
+
+  it("GitHub falls back to squash on 405", async () => {
+    const { calls, fetchImpl } = fakeFetch([
+      { status: 200, body: open },
+      { status: 405, body: { message: "Rebase merges are not allowed" } },
+      { status: 200, body: { sha: "sq1", merged: true } },
+      { status: 204, body: "" },
+    ]);
+    const res = await createProvider(ghRef, TOKEN, fetchImpl).mergePullRequest("7", { headCommit: "h1", message: "T\n\nbody" });
+    expect(res.mergeCommit).toBe("sq1");
+    expect(JSON.parse(calls[2]!.body!)).toEqual({ merge_method: "squash", sha: "h1", commit_title: "T", commit_message: "body" });
+  });
+
+  it("GitHub reports a 405 after the fallback with the host's message", async () => {
+    const { fetchImpl } = fakeFetch([
+      { status: 200, body: open },
+      { status: 405, body: { message: "nope" } },
+      { status: 405, body: { message: "Required reviews missing" } },
+    ]);
+    await expect(createProvider(ghRef, TOKEN, fetchImpl).mergePullRequest("7", { headCommit: "h1", message: "T" })).rejects.toThrow(/Required reviews missing/);
+  });
+
+  it("GitHub reports a moved branch on 409", async () => {
+    const { fetchImpl } = fakeFetch([{ status: 200, body: open }, { status: 409, body: { message: "Head branch was modified" } }]);
+    await expect(createProvider(ghRef, TOKEN, fetchImpl).mergePullRequest("7", { headCommit: "h1", message: "T" })).rejects.toThrow(
+      "the pull request's branch changed on api.github.com; ask for approval again",
+    );
+  });
+
+  it("GitHub returns the merge commit of an already merged pull request without merging", async () => {
+    const { calls, fetchImpl } = fakeFetch([{ status: 200, body: { state: "closed", merged: true, merge_commit_sha: "done1", head: { ref: "x" } } }]);
+    const res = await createProvider(ghRef, TOKEN, fetchImpl).mergePullRequest("7", { headCommit: "h1", message: "T" });
+    expect(res).toEqual({ mergeCommit: "done1" });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("Azure DevOps updates (truncating the description) and abandons", async () => {
+    const { calls, fetchImpl } = fakeFetch([{ status: 200, body: {} }, { status: 200, body: {} }]);
+    const p = createProvider(azRef, TOKEN, fetchImpl);
+    await p.updatePullRequest("9", { title: "T2", description: "x".repeat(5000) });
+    await p.closePullRequest("9");
+    expect(calls[0]!.url).toBe("https://dev.azure.com/acme/Shop%20Floor/_apis/git/repositories/checkout-app/pullrequests/9?api-version=7.1");
+    expect(calls[0]!.method).toBe("PATCH");
+    const body = JSON.parse(calls[0]!.body!);
+    expect(body.title).toBe("T2");
+    expect(body.description).toHaveLength(4000);
+    expect(JSON.parse(calls[1]!.body!)).toEqual({ status: "abandoned" });
+  });
+
+  it("Azure DevOps merges, polling until completed", async () => {
+    const { calls, fetchImpl } = fakeFetch([
+      { status: 200, body: { status: "active", mergeStatus: "queued" } },
+      { status: 200, body: { status: "active", mergeStatus: "succeeded" } },
+      { status: 200, body: { status: "completed", lastMergeCommit: { commitId: "m1" } } },
+    ]);
+    const res = await createProvider(azRef, TOKEN, fetchImpl, { sleep: noSleep }).mergePullRequest("9", { headCommit: "h1", message: "msg" });
+    expect(res).toEqual({ mergeCommit: "m1" });
+    expect(calls).toHaveLength(3);
+    expect(JSON.parse(calls[0]!.body!)).toEqual({
+      status: "completed",
+      lastMergeSourceCommit: { commitId: "h1" },
+      completionOptions: { mergeStrategy: "rebase", deleteSourceBranch: true, mergeCommitMessage: "msg" },
+    });
+    expect(calls[1]!.method ?? "GET").toBe("GET");
+  });
+
+  it("Azure DevOps explains conflicts and policy rejections", async () => {
+    const a = fakeFetch([{ status: 200, body: { status: "active", mergeStatus: "queued" } }, { status: 200, body: { status: "active", mergeStatus: "conflicts" } }]);
+    await expect(createProvider(azRef, TOKEN, a.fetchImpl, { sleep: noSleep }).mergePullRequest("9", { headCommit: "h1", message: "m" })).rejects.toThrow(
+      "Azure DevOps did not complete the merge: conflicts",
+    );
+    const b = fakeFetch([{ status: 200, body: { status: "active", mergeStatus: "rejectedByPolicy" } }]);
+    await expect(createProvider(azRef, TOKEN, b.fetchImpl, { sleep: noSleep }).mergePullRequest("9", { headCommit: "h1", message: "m" })).rejects.toThrow(
+      /rejected by a branch policy/,
+    );
+  });
+
+  it("Azure DevOps reports a moved source commit and a merge that never completes", async () => {
+    const a = fakeFetch([{ status: 409, body: { message: "The source commit does not match lastMergeSourceCommit" } }]);
+    await expect(createProvider(azRef, TOKEN, a.fetchImpl, { sleep: noSleep }).mergePullRequest("9", { headCommit: "h1", message: "m" })).rejects.toThrow(
+      /branch changed on dev.azure.com; ask for approval again/,
+    );
+    const stuck = Array.from({ length: 30 }, () => ({ status: 200, body: { status: "active", mergeStatus: "queued" } }));
+    const b = fakeFetch(stuck);
+    await expect(createProvider(azRef, TOKEN, b.fetchImpl, { sleep: noSleep }).mergePullRequest("9", { headCommit: "h1", message: "m" })).rejects.toThrow(
+      /has not completed the merge yet \(mergeStatus: queued\)/,
+    );
+  });
+
+  it("never leaks the token in merge errors", async () => {
+    const net: FetchLike = async () => {
+      throw new Error(`connect failed with ${TOKEN}`);
+    };
+    const msg = await createProvider(ghRef, TOKEN, net).mergePullRequest("1", { headCommit: "h", message: "m" }).catch((e: Error) => e.message);
+    expect(msg).not.toContain(TOKEN);
+  });
+});

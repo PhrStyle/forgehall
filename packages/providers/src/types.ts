@@ -44,12 +44,28 @@ export interface PullRequestRef {
 
 export type PullRequestStatus = "open" | "merged" | "closed";
 
+export interface MergeResult {
+  /** The commit now at the head of the target branch. */
+  mergeCommit: string;
+}
+
 export interface RepoProvider {
   readonly ref: RepoRef;
   /** People who can review, matching a name, login or e-mail. */
   searchReviewers(query: string): Promise<Reviewer[]>;
   createPullRequest(pr: NewPullRequest): Promise<PullRequestRef>;
   pullRequestStatus(id: string): Promise<PullRequestStatus>;
+  /** Replaces the title and description of an open pull request. */
+  updatePullRequest(id: string, pr: { title: string; description: string }): Promise<void>;
+  /**
+   * Merges an open pull request on the host, only if its source branch is still at `headCommit`
+   * (so nothing unseen gets merged), keeping the branch's commits as they are (rebase or fast
+   * forward), then deletes the source branch. Throws ProviderError when the host refuses: conflicts,
+   * branch policies, a moved branch.
+   */
+  mergePullRequest(id: string, opts: { headCommit: string; message: string }): Promise<MergeResult>;
+  /** Closes (GitHub) or abandons (Azure DevOps) a pull request without merging. */
+  closePullRequest(id: string): Promise<void>;
 }
 
 /** Raised for host API errors, with a message safe to show (never the token). */
