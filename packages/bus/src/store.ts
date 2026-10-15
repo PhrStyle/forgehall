@@ -4,7 +4,7 @@ import type postgres from "postgres";
 import type { Sql } from "./db.js";
 
 type Tx = Sql | postgres.TransactionSql;
-import { createProvider, detectProvider, gitAuthHeader, parseRepoUrl, ProviderError, stripCredentials, type ProviderKind, type Reviewer } from "@forgehall/providers";
+import { createProvider, detectProvider, gitAuthHeader, parseRepoUrl, ProviderError, stripCredentials, type ProviderKind, type RepoProvider, type Reviewer } from "@forgehall/providers";
 import { branchDiff, ensureStaging, MergeConflictError, publishBranch, publishToBase, revParse, squashApproved, stagingPath, syncBase, threadBranch, type UpstreamAuth } from "./git.js";
 import { readAccountToken, readAgentHostToken, readProviderToken, removeAccountToken, removeAgentHostToken, removeProviderToken, writeAccountToken, writeAgentHostToken, writeProviderToken } from "./accounts.js";
 import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
@@ -32,7 +32,16 @@ export interface ThreadRow {
   branch: string | null;
   created_by: string;
   assignee: string | null;
+  /** Merge policy on a host: the pull request opened for the thread's approvals. */
+  pull_request: ThreadPullRequest | null;
   updated_at: Date;
+}
+
+export interface ThreadPullRequest {
+  id: string;
+  url: string;
+  branch: string;
+  status: "open" | "merged" | "closed";
 }
 
 export interface MessageRow {
@@ -84,6 +93,11 @@ export interface Publishing {
 /** Masks credentials in text that may reach logs or the console. */
 const redactAuth = (text: string) => text.replace(/\b(Basic|Bearer) [A-Za-z0-9+/=._~-]+/g, "$1 ***");
 
+const authorOf = (pub: Publishing) => ({ name: pub.git_author_name || DEFAULT_AUTHOR.name, email: pub.git_author_email || DEFAULT_AUTHOR.email });
+/** The published commit's message: title, the approval summary, and the AI trailer if the workspace wants it. */
+const commitMessage = (pub: Publishing, title: string, summary: string) =>
+  [title, summary.trim(), pub.ai_trailer ? AI_TRAILER : ""].filter(Boolean).join("\n\n");
+
 export const AI_TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>";
 const DEFAULT_AUTHOR = { name: "Forgehall", email: "forgehall@localhost" };
 
@@ -98,6 +112,8 @@ export interface ApprovalRow {
   state: "pending" | "approved" | "rejected" | "superseded";
   comment: string | null;
   result: ApprovalResult | null;
+  /** Merge policy on a host: the squashed commit pushed to the pull request for this approval. */
+  published: { head: string; commit: string } | null;
   created_at: Date;
   decided_at: Date | null;
 }
@@ -440,6 +456,17 @@ export class Store {
         VALUES (${t.workspace_id}, ${threadId}, 'notify', ${HUMAN}, ${t.assignee ?? HUMAN}, ${body}) RETURNING id`;
       await notify(tx, { kind: "message", workspace: t.workspace_id, thread: threadId, message: msg!.id });
     });
+    // A cancelled thread's pull request is closed on the host too (best effort).
+    const t = (await this.thread(threadId))!;
+    if (state === "cancelled" && t.pull_request?.status === "open") {
+      const host = await this.hostFor(t).catch(() => null);
+      if (host) {
+        await host.provider.closePullRequest(t.pull_request.id).then(
+          () => this.sql`UPDATE threads SET pull_request = pull_request || '{"status":"closed"}' WHERE id = ${threadId}`,
+          (e) => console.error(`[bus] closing pull request of ${threadId}: ${redactAuth((e as Error).message)}`),
+        );
+      }
+    }
   }
 
   /** The user reopens a closed or blocked thread; the note wakes the assignee. */
@@ -562,6 +589,7 @@ export class Store {
   }
 
   async finishRun(agent: AgentRow, runId: number, f: RunFinish): Promise<void> {
+    let threadId: string | null = null;
     await this.sql.begin(async (tx) => {
       const [run] = await tx<{ thread_id: string; state: string }[]>`SELECT thread_id, state FROM runs
         WHERE id = ${runId} AND workspace_id = ${agent.workspace_id} AND agent_id = ${agent.id} FOR UPDATE`;
@@ -587,7 +615,10 @@ export class Store {
       await this.afterRun(tx, { workspaceId: agent.workspace_id, agentId: agent.id, threadId: run.thread_id, runId, ok: f.ok, error: f.error });
       await this.pinApprovals(tx, run.thread_id, agent.id);
       await this.approvalForCompletedChanges(tx, run.thread_id, agent.id);
+      threadId = run.thread_id;
     });
+    // Network calls to the host happen outside the transaction.
+    if (threadId) void this.openReview(threadId);
   }
 
   /**
@@ -776,6 +807,7 @@ export class Store {
         VALUES (${t.workspace_id}, ${threadId}, ${ws!.approval_policy}, ${agent.id}, ${summary}, ${head}) RETURNING *` as unknown as [ApprovalRow];
     }
     const message = await this.postMessage({ workspaceId: t.workspace_id, threadId, type: "approval", from: agent.id, to: HUMAN, body: summary });
+    if (approval?.head_sha) void this.openReview(threadId);
     return { message, approval };
   }
 
@@ -828,17 +860,27 @@ export class Store {
     const auth = await this.upstreamAuth(t.workspace_id, repo.provider as ProviderKind);
     if (policy === "pull_request" && !auth) throw new BusError(`no ${repo.provider} credential for workspace ${t.workspace_id}: add one in Settings → Publishing`);
 
-    const author = { name: pub.git_author_name || DEFAULT_AUTHOR.name, email: pub.git_author_email || DEFAULT_AUTHOR.email };
-    const message = [title, a.summary.trim(), pub.ai_trailer ? AI_TRAILER : ""].filter(Boolean).join("\n\n");
+    const author = authorOf(pub);
+    const message = commitMessage(pub, title, a.summary);
     let result: ApprovalResult;
     let note: string;
     try {
-      const commit = await squashApproved(staging, repo.base_branch, branch, a.head_sha, message, author, auth);
-      if (policy === "merge") {
+      const host = policy === "merge" && auth ? await this.hostFor(t) : null;
+      if (host) {
+        // A real pull request on the host: make sure it carries this approval's commit, then merge it there.
+        const review = await this.publishReview(t, a, title);
+        const merged = await host.provider.mergePullRequest(review.pr.id, { headCommit: review.commit, message });
+        await syncBase(staging, repo.base_branch, auth).catch(() => {});
+        await this.sql`UPDATE threads SET pull_request = pull_request || '{"status":"merged"}' WHERE id = ${t.id}`;
+        result = { merged: merged.mergeCommit, pr: { id: review.pr.id, url: review.pr.url, status: "merged" } };
+        note = `Approved and merged pull request ${review.pr.id} (${review.pr.url}) into ${repo.base_branch} as ${merged.mergeCommit.slice(0, 7)}.`;
+      } else if (policy === "merge") {
+        const commit = await squashApproved(staging, repo.base_branch, branch, a.head_sha, message, author, auth);
         await publishToBase(staging, repo.base_branch, commit, auth);
         result = { merged: commit };
         note = `Approved and merged into ${repo.base_branch} as ${commit.slice(0, 7)}.`;
       } else {
+        const commit = await squashApproved(staging, repo.base_branch, branch, a.head_sha, message, author, auth);
         await publishBranch(staging, branch, commit, auth);
         result = { branch, commit };
         note = `Approved and pushed to ${branch} as ${commit.slice(0, 7)}.`;
@@ -860,7 +902,7 @@ export class Store {
 
     await this.sql`UPDATE approvals SET state = 'approved', comment = ${comment}, decided_at = now(), result = ${this.sql.json(result as never)} WHERE id = ${approvalId}`;
     const body = `${note}${comment?.trim() ? ` ${comment.trim()}` : ""}`;
-    if (result.pr) {
+    if (result.pr?.status === "open") {
       // The real review happens on the host: tell the assignee without waking it, and wait.
       await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "notify", from: HUMAN, to: assignee, body });
       await this.setThreadState(t, "external_review");
@@ -868,6 +910,75 @@ export class Store {
       await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: HUMAN, to: assignee, body });
     }
     return (await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${approvalId}`)[0]!;
+  }
+
+  /** The thread's repository host with the workspace's write credential, or null (local repo, no token). */
+  private async hostFor(t: ThreadRow): Promise<{ repo: RepoRow; provider: RepoProvider } | null> {
+    if (!t.repo_id) return null;
+    const repo = await this.repo(t.workspace_id, t.repo_id);
+    if (!repo || repo.provider === "local") return null;
+    const token = await readProviderToken(t.workspace_id, repo.provider);
+    return token ? { repo, provider: createProvider(parseRepoUrl(repo.upstream_url), token) } : null;
+  }
+
+  private reviewLocks = new Map<string, Promise<unknown>>();
+
+  /**
+   * Merge policy on a host: pushes the approval's squashed commit to the thread branch upstream and
+   * opens the thread's pull request, or updates it when one is open. One at a time per thread.
+   */
+  private publishReview(t: ThreadRow, a: ApprovalRow, title: string): Promise<{ pr: ThreadPullRequest; commit: string }> {
+    const run = async () => {
+      const [fresh] = await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE id = ${a.id}`;
+      const [thread] = await this.sql<ThreadRow[]>`SELECT * FROM threads WHERE id = ${t.id}`;
+      if (fresh?.published?.head === a.head_sha && thread?.pull_request?.status === "open") {
+        return { pr: thread.pull_request, commit: fresh.published.commit };
+      }
+      const host = (await this.hostFor(t))!;
+      const { repo, staging, branch } = await this.threadRepo(t);
+      const pub = await this.publishing(t.workspace_id);
+      const auth = await this.upstreamAuth(t.workspace_id, repo.provider as ProviderKind);
+      const commit = await squashApproved(staging, repo.base_branch, branch, a.head_sha!, commitMessage(pub, title, a.summary), authorOf(pub), auth);
+      await publishBranch(staging, branch, commit, auth);
+      const description = [a.summary.trim(), `Thread ${t.id}. Opened by Forgehall: approve it in the console to merge.`].join("\n\n");
+      let pr = thread?.pull_request?.status === "open" ? thread.pull_request : null;
+      if (pr) {
+        await host.provider.updatePullRequest(pr.id, { title, description });
+      } else {
+        const created = await host.provider.createPullRequest({ source: branch, target: repo.base_branch, title, description, reviewerIds: [] });
+        pr = { id: created.id, url: created.url, branch, status: "open" };
+        await this.sql`UPDATE threads SET pull_request = ${this.sql.json(pr as never)} WHERE id = ${t.id}`;
+      }
+      await this.sql`UPDATE approvals SET published = ${this.sql.json({ head: a.head_sha, commit } as never)} WHERE id = ${a.id}`;
+      return { pr, commit, created: !thread?.pull_request || thread.pull_request.status !== "open" };
+    };
+    const prev = this.reviewLocks.get(t.id) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(run);
+    this.reviewLocks.set(t.id, next);
+    return next;
+  }
+
+  /** After an approval request is pinned: open or update the thread's pull request, and tell the user. */
+  private async openReview(threadId: string): Promise<void> {
+    const t = await this.thread(threadId);
+    if (!t) return;
+    const [a] = await this.sql<ApprovalRow[]>`SELECT * FROM approvals WHERE thread_id = ${threadId} AND state = 'pending'
+      AND policy = 'merge' AND head_sha IS NOT NULL ORDER BY id DESC LIMIT 1`;
+    if (!a || a.published?.head === a.head_sha) return;
+    if (!(await this.hostFor(t).catch(() => null))) return;
+    try {
+      const r = (await this.publishReview(t, a, t.title)) as { pr: ThreadPullRequest; created?: boolean };
+      await this.postMessage({
+        workspaceId: t.workspace_id, threadId, type: "notify", from: SYSTEM, to: HUMAN,
+        body: `Pull request ${r.pr.id} ${r.created ? "opened" : "updated"} for review: ${r.pr.url}. Approve and merge here merges it on the host.`,
+      });
+    } catch (e) {
+      const why = e instanceof MergeConflictError || e instanceof ProviderError ? e.message : redactAuth((e as Error).message.split("\n")[0]!);
+      await this.postMessage({
+        workspaceId: t.workspace_id, threadId, type: "notify", from: SYSTEM, to: HUMAN,
+        body: `Could not open the pull request on the host: ${why}. Approving will try again.`,
+      }).catch(() => {});
+    }
   }
 
   private async setThreadState(t: ThreadRow, state: ThreadState): Promise<void> {
@@ -908,6 +1019,36 @@ export class Store {
         }
       } catch (e) {
         console.error(`[bus] checking pull request of approval ${a.id}: ${redactAuth((e as Error).message)}`);
+      }
+    }
+    // Merge policy: pull requests opened for approvals, merged or closed by someone on the host.
+    const threads = await this.sql<ThreadRow[]>`SELECT * FROM threads WHERE pull_request->>'status' = 'open'`;
+    for (const t of threads) {
+      try {
+        const host = await this.hostFor(t);
+        if (!host) continue;
+        const status = await host.provider.pullRequestStatus(t.pull_request!.id);
+        if (status === "open") continue;
+        changed++;
+        await this.sql`UPDATE threads SET pull_request = pull_request || ${this.sql.json({ status } as never)} WHERE id = ${t.id}`;
+        if (t.state === "done" || t.state === "cancelled") continue;
+        const assignee = t.assignee && t.assignee !== HUMAN ? t.assignee : HUMAN;
+        if (status === "merged") {
+          await this.sql`UPDATE approvals SET state = 'approved', decided_at = now(), comment = 'merged on the host',
+              result = ${this.sql.json({ pr: { id: t.pull_request!.id, url: t.pull_request!.url, status: "merged" } } as never)}
+            WHERE thread_id = ${t.id} AND state = 'pending'`;
+          const { repo, staging } = await this.threadRepo(t);
+          await syncBase(staging, repo.base_branch, await this.upstreamAuth(t.workspace_id, repo.provider as ProviderKind)).catch(() => {});
+          await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "complete", from: SYSTEM, to: assignee,
+            body: `Pull request ${t.pull_request!.id} was merged on ${host.repo.provider}.` });
+        } else {
+          await this.sql`UPDATE approvals SET state = 'superseded', comment = 'pull request closed on the host' WHERE thread_id = ${t.id} AND state = 'pending'`;
+          await this.postMessage({ workspaceId: t.workspace_id, threadId: t.id, type: "notify", from: SYSTEM, to: HUMAN,
+            body: `Pull request ${t.pull_request!.id} was closed on ${host.repo.provider} without merging. Reopen the thread with instructions, or close it.` });
+          await this.setThreadState(t, "blocked");
+        }
+      } catch (e) {
+        console.error(`[bus] checking pull request of ${t.id}: ${redactAuth((e as Error).message)}`);
       }
     }
     return changed;
