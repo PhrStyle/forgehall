@@ -57,3 +57,29 @@ export async function readProviderToken(workspaceId: string, provider: string): 
 export async function removeProviderToken(workspaceId: string, provider: string): Promise<void> {
   await rm(providerTokenPath(workspaceId, provider), { force: true });
 }
+
+/** Host tokens given to one agent (read or write, as the token allows). Same file rules. */
+export const agentTokenPath = (workspaceId: string, agentId: string, provider: string) =>
+  join(forgehallHome(), "secrets", "agents", workspaceId, agentId, `${provider}.token`);
+
+export async function writeAgentHostToken(workspaceId: string, agentId: string, provider: string, token: string): Promise<void> {
+  const dir = join(forgehallHome(), "secrets", "agents", workspaceId, agentId);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  for (const d of [join(forgehallHome(), "secrets"), join(forgehallHome(), "secrets", "agents"), join(forgehallHome(), "secrets", "agents", workspaceId)]) {
+    await chmod(d, 0o700).catch(() => {});
+  }
+  await writeFile(agentTokenPath(workspaceId, agentId, provider), token + "\n", { mode: 0o600 });
+  await chmod(agentTokenPath(workspaceId, agentId, provider), 0o600);
+}
+
+export async function readAgentHostToken(workspaceId: string, agentId: string, provider: string): Promise<string | null> {
+  try {
+    return (await readFile(agentTokenPath(workspaceId, agentId, provider), "utf8")).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function removeAgentHostToken(workspaceId: string, agentId: string, provider: string): Promise<void> {
+  await rm(agentTokenPath(workspaceId, agentId, provider), { force: true });
+}

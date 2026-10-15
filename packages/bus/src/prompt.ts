@@ -7,7 +7,7 @@ const who = (actor: string) => (actor === HUMAN ? "the user" : actor);
  * Prompt for one run: a bus header plus every message delivered in this run.
  * Messages from other agents are framed as data; only the user's messages carry their authority.
  */
-export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: MessageRow[]; resumed: boolean }): string {
+export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: MessageRow[]; resumed: boolean; hostAccess?: string[] }): string {
   const { agent, thread, messages } = p;
   const lines: string[] = [];
   lines.push(`[forgehall] workspace ${thread.workspace_id} · thread ${thread.id} "${thread.title}" · state: ${thread.state}`);
@@ -24,6 +24,12 @@ export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: M
   if (thread.repo_id && thread.branch) {
     lines.push(`Repository: ${thread.repo_id}. Your working directory is a checkout of branch ${thread.branch}.`);
     lines.push("Edit files directly. Do not run git: when your turn ends successfully, your changes are committed and pushed to the thread branch for you.");
+    lines.push("");
+  }
+  const access = p.hostAccess ?? [];
+  if (access.length) {
+    const vars: Record<string, string> = { github: "GH_TOKEN (GitHub)", "azure-devops": "AZURE_DEVOPS_EXT_PAT (Azure DevOps)" };
+    lines.push(`Host access: ${access.map((h) => vars[h] ?? h).join(", ")} in your environment, with whatever rights the token has. Use it only for this thread's task; never print it. Commands that use it may need the user's permission.`);
     lines.push("");
   }
   lines.push("How to act:");

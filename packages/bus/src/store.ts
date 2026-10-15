@@ -6,7 +6,7 @@ import type { Sql } from "./db.js";
 type Tx = Sql | postgres.TransactionSql;
 import { createProvider, detectProvider, gitAuthHeader, parseRepoUrl, ProviderError, stripCredentials, type ProviderKind, type Reviewer } from "@forgehall/providers";
 import { branchDiff, ensureStaging, MergeConflictError, publishBranch, publishToBase, revParse, squashApproved, stagingPath, syncBase, threadBranch, type UpstreamAuth } from "./git.js";
-import { readAccountToken, readProviderToken, removeAccountToken, removeProviderToken, writeAccountToken, writeProviderToken } from "./accounts.js";
+import { readAccountToken, readAgentHostToken, readProviderToken, removeAccountToken, removeAgentHostToken, removeProviderToken, writeAccountToken, writeAgentHostToken, writeProviderToken } from "./accounts.js";
 import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
@@ -128,6 +128,19 @@ export interface AccountRow {
 export class BusError extends Error {}
 
 const DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"];
+const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/** An agent as the console edits it. Host tokens are never returned, only their last 4 characters. */
+export interface AgentSettings {
+  id: string;
+  name: string;
+  role: string;
+  default_model: Model;
+  accepts_from: string[];
+  prompt: string;
+  permissions: Partial<PermissionRules>;
+  credentials: { provider: HostProvider; token_hint: string; created_at: Date }[];
+}
 
 /** Consecutive failed runs of one agent on one thread before the thread is blocked. */
 export const MAX_ATTEMPTS = 3;
@@ -175,6 +188,83 @@ export class Store {
         default_model = EXCLUDED.default_model, accepts_from = EXCLUDED.accepts_from,
         -- merge: keep what the user granted over time (e.g. "Always allow" permission rules)
         config = agents.config || EXCLUDED.config`;
+  }
+
+  // ---------- workspaces and agents from the console ----------
+
+  /** Creates a workspace; refuses an id that exists (the CLI's upsert renames instead). */
+  async createWorkspace(id: string, name: string): Promise<{ id: string; name: string }> {
+    if (!ID_RE.test(id)) throw new BusError("workspace id: lowercase letters, digits and -, starting with a letter or digit (max 40)");
+    if (!name.trim()) throw new BusError("workspace name is required");
+    const [row] = await this.sql<{ id: string; name: string }[]>`INSERT INTO workspaces (id, name) VALUES (${id}, ${name.trim()})
+      ON CONFLICT (id) DO NOTHING RETURNING id, name`;
+    if (!row) throw new BusError(`workspace ${id} already exists`);
+    return row;
+  }
+
+  /** Creates an agent in a workspace; refuses an id that exists. Start it with `fh agent run`. */
+  async createAgent(a: { workspaceId: string; id: string; name: string; role: string; defaultModel: Model; acceptsFrom?: string[]; prompt?: string }): Promise<AgentSettings> {
+    if (!ID_RE.test(a.id) || a.id === HUMAN || a.id === SYSTEM) throw new BusError("agent id: lowercase letters, digits and -, starting with a letter or digit (max 40); not you or system");
+    const [ws] = await this.sql`SELECT 1 FROM workspaces WHERE id = ${a.workspaceId}`;
+    if (!ws) throw new BusError(`workspace ${a.workspaceId} not found`);
+    const [exists] = await this.sql`SELECT 1 FROM agents WHERE workspace_id = ${a.workspaceId} AND id = ${a.id}`;
+    if (exists) throw new BusError(`agent ${a.id} already exists in ${a.workspaceId}`);
+    if (!a.name.trim() || !a.role.trim()) throw new BusError("name and role are required");
+    await this.upsertAgent({ ...a, name: a.name.trim(), role: a.role.trim() });
+    return this.agentSettings(a.workspaceId, a.id);
+  }
+
+  async updateAgent(workspaceId: string, id: string, p: { name?: string; role?: string; defaultModel?: Model; acceptsFrom?: string[]; prompt?: string }): Promise<AgentSettings> {
+    const cur = await this.agentSettings(workspaceId, id);
+    const name = p.name?.trim() ?? cur.name;
+    const role = p.role?.trim() ?? cur.role;
+    if (!name || !role) throw new BusError("name and role are required");
+    await this.sql`UPDATE agents SET name = ${name}, role = ${role}, default_model = ${p.defaultModel ?? cur.default_model},
+        accepts_from = ${p.acceptsFrom ?? cur.accepts_from},
+        config = config || ${this.sql.json({ prompt: p.prompt ?? cur.prompt })}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}`;
+    return this.agentSettings(workspaceId, id);
+  }
+
+  async agentSettings(workspaceId: string, id: string): Promise<AgentSettings> {
+    const [a] = await this.sql<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${workspaceId} AND id = ${id}`;
+    if (!a) throw new BusError(`agent ${workspaceId}/${id} not found`);
+    const credentials = await this.sql<AgentSettings["credentials"]>`SELECT provider, token_hint, created_at FROM agent_credentials
+      WHERE workspace_id = ${workspaceId} AND agent_id = ${id} ORDER BY provider`;
+    return {
+      id: a.id, name: a.name, role: a.role, default_model: a.default_model, accepts_from: a.accepts_from,
+      prompt: a.config.prompt ?? "", permissions: a.config.permissions ?? {}, credentials: [...credentials],
+    };
+  }
+
+  async setAgentCredential(workspaceId: string, agentId: string, provider: string, raw: string): Promise<AgentSettings["credentials"][number]> {
+    if (!HOST_PROVIDERS.includes(provider as HostProvider)) throw new BusError(`provider must be one of ${HOST_PROVIDERS.join(", ")}`);
+    await this.agentSettings(workspaceId, agentId);
+    const token = raw.replace(/\s+/g, "");
+    if (token.length < 20) throw new BusError("that does not look like an access token");
+    await writeAgentHostToken(workspaceId, agentId, provider, token);
+    const [row] = await this.sql<AgentSettings["credentials"]>`INSERT INTO agent_credentials (workspace_id, agent_id, provider, token_hint)
+      VALUES (${workspaceId}, ${agentId}, ${provider}, ${token.slice(-4)})
+      ON CONFLICT (workspace_id, agent_id, provider) DO UPDATE SET token_hint = EXCLUDED.token_hint, created_at = now()
+      RETURNING provider, token_hint, created_at`;
+    return row!;
+  }
+
+  async deleteAgentCredential(workspaceId: string, agentId: string, provider: string): Promise<void> {
+    if (!HOST_PROVIDERS.includes(provider as HostProvider)) throw new BusError(`provider must be one of ${HOST_PROVIDERS.join(", ")}`);
+    await this.sql`DELETE FROM agent_credentials WHERE workspace_id = ${workspaceId} AND agent_id = ${agentId} AND provider = ${provider}`;
+    await removeAgentHostToken(workspaceId, agentId, provider);
+  }
+
+  /** Host tokens handed to the agent's runner with each claim. */
+  private async agentHostAccess(workspaceId: string, agentId: string): Promise<{ provider: HostProvider; token: string }[]> {
+    const rows = await this.sql<{ provider: HostProvider }[]>`SELECT provider FROM agent_credentials WHERE workspace_id = ${workspaceId} AND agent_id = ${agentId}`;
+    const out: { provider: HostProvider; token: string }[] = [];
+    for (const r of rows) {
+      const token = await readAgentHostToken(workspaceId, agentId, r.provider);
+      if (token) out.push({ provider: r.provider, token });
+    }
+    return out;
   }
 
   /** Issues a new token for an agent (invalidating the previous one) and returns it once. */
@@ -357,6 +447,7 @@ export class Store {
       if (thread!.state === "open") await tx`UPDATE threads SET state = 'in_progress', updated_at = now() WHERE id = ${run.thread_id}`;
       // A new run starts from the escalation it was routed with; clear the flag for the next one.
       await tx`UPDATE threads SET flags = flags #- ${["escalate", agent.id]} WHERE id = ${run.thread_id}`;
+      const hostAccess = await this.agentHostAccess(agent.workspace_id, agent.id);
       return {
         runId: Number(run.id),
         workspaceId: agent.workspace_id,
@@ -366,11 +457,12 @@ export class Store {
         effort: run.effort,
         routeReason: run.route_reason,
         sessionId: session?.session_id ?? null,
-        prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session) }),
+        prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session), hostAccess: hostAccess.map((h) => h.provider) }),
         agentPrompt: agent.config.prompt ?? "",
         allowedTools: rulesFor(mode, agent.config.permissions).allow,
         permissions: rulesFor(mode, agent.config.permissions),
         runnerMode: mode,
+        hostAccess,
         repo: thread!.repo_id && thread!.branch
           ? { id: thread!.repo_id, base: (await tx<{ base_branch: string }[]>`SELECT base_branch FROM repos WHERE workspace_id = ${agent.workspace_id} AND id = ${thread!.repo_id}`)[0]!.base_branch, branch: thread!.branch }
           : null,

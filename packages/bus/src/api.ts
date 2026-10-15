@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { HUMAN, MessageType } from "@forgehall/shared";
+import { HUMAN, MessageType, Model } from "@forgehall/shared";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PLANS } from "./accounts.js";
@@ -34,6 +34,41 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
   app.get("/api/workspaces", async () => store.workspaces());
 
   app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/agents", async (req) => store.agentsOverview(req.params.ws));
+
+  // Creating and editing workspaces and agents. Starting an agent's container stays on the host
+  // (`fh agent run`): the bus has no access to Docker, on purpose.
+  const Id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/, "lowercase letters, digits and -, max 40");
+  app.post("/api/workspaces", async (req, reply) => {
+    const b = z.object({ id: Id, name: z.string().min(1).max(60) }).parse(req.body);
+    return reply.code(201).send(await store.createWorkspace(b.id, b.name));
+  });
+  const AgentBody = z.object({
+    name: z.string().min(1).max(60),
+    role: z.string().min(1).max(60),
+    default_model: Model,
+    accepts_from: z.array(z.string().max(40)).max(50).optional(),
+    prompt: z.string().max(20_000).optional(),
+  });
+  app.post<{ Params: { ws: string } }>("/api/workspaces/:ws/agents", async (req, reply) => {
+    const b = AgentBody.extend({ id: Id }).parse(req.body);
+    return reply.code(201).send(await store.createAgent({
+      workspaceId: req.params.ws, id: b.id, name: b.name, role: b.role, defaultModel: b.default_model, acceptsFrom: b.accepts_from, prompt: b.prompt,
+    }));
+  });
+  app.get<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id/settings", async (req) => store.agentSettings(req.params.ws, req.params.id));
+  app.patch<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id", async (req) => {
+    const b = AgentBody.partial().parse(req.body);
+    return store.updateAgent(req.params.ws, req.params.id, {
+      name: b.name, role: b.role, defaultModel: b.default_model, acceptsFrom: b.accepts_from, prompt: b.prompt,
+    });
+  });
+  app.put<{ Params: { ws: string; id: string; provider: string } }>("/api/workspaces/:ws/agents/:id/credentials/:provider", async (req) =>
+    store.setAgentCredential(req.params.ws, req.params.id, req.params.provider, z.object({ token: z.string().min(1).max(2000) }).parse(req.body).token),
+  );
+  app.delete<{ Params: { ws: string; id: string; provider: string } }>("/api/workspaces/:ws/agents/:id/credentials/:provider", async (req, reply) => {
+    await store.deleteAgentCredential(req.params.ws, req.params.id, req.params.provider);
+    return reply.code(204).send();
+  });
 
   app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/threads", async (req) => store.threadsOverview(req.params.ws));
 
