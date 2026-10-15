@@ -37,6 +37,8 @@ fh repos dev
 
 The upstream is stored as the path the bus sees (`/data/upstreams/...`). `fh repo add` goes through the bus API, because the bus owns the staging remotes. It translates the host path to the bus's `/data` mount, and refuses a local path outside `~/.forgehall` with an explanation (use a git URL instead). The staging remote is created at `~/.forgehall/staging/dev/checkout-app.git` on your machine (`/data/staging/...` in the bus container). Agents push there, never to your upstream.
 
+For a repository on GitHub or Azure DevOps you can also use the console: **Settings → Repositories → Add repository**, or **+ Add** next to the repository field in **New task**. Paste the URL (`https://github.com/acme/checkout-app`, `https://dev.azure.com/acme/Shop/_git/checkout-app` or the short `https://dev.azure.com/acme/_git/checkout-app`); the host is detected from it. For a private repository, add the workspace's token in **Settings → Publishing** first. Local paths still need `fh repo add`.
+
 ## 3. Ask atlas to fix the bug
 
 With the CLI:
