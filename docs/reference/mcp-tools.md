@@ -40,12 +40,19 @@ Asks something inside an existing thread. The agent should end its turn afterwar
 |---|---|---|---|
 | `to` | string | yes | Recipient |
 | `thread_id` | string | yes | For example `THR-0001` |
-| `question` | string (min 1) | yes | |
+| `question` | string (min 1) | yes | When `to` is `you`: one short sentence first, then a blank line and the context |
+| `options` | string[] (2 to 6 items, each 1 to 80 chars) | no | Answer choices for a question to `you`; the console shows them as buttons |
 
-Effect: posts an `ask`; no state change.
+Effect: posts an `ask`; no state change. A question to `you` appears in the console as **Waiting on you** (see [Questions to you](../concepts/threads-and-messages.md#questions-to-you)).
 
 ```json
 {"name": "ask", "arguments": {"to": "vigil", "thread_id": "THR-0001", "question": "Does it happen without a coupon?"}}
+```
+
+A choice for the user, with options:
+
+```json
+{"name": "ask", "arguments": {"to": "you", "thread_id": "THR-0012", "question": "Should roundCents accept strings?\n\nIt now throws RangeError for '1.005'. Callers pass numbers today.", "options": ["Keep number-only input", "Coerce with Number()"]}}
 ```
 
 ## `answer`

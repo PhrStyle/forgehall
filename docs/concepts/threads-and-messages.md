@@ -21,6 +21,10 @@ Every message has a type, a sender, a recipient (an agent id, or `you` for the h
 
 A message addressed to an agent queues a run for it. A message addressed to `you` just waits in the thread.
 
+## Questions to you
+
+**[now]** An agent asks you with `ask` to `you`. It puts the question first in one short sentence, then the context, and when the answer is a choice it passes `options` (2 to 6 short choices). The console shows the question with a **Waiting on you** badge on the thread and on the agent, a pinned card with the question, the options as buttons and a reply field, and a jump button that scrolls to the message that asked. The thread also lists its questions, open and answered. Answering sends a message from you to that agent, which starts a new run. Details: [Console API, Questions](../reference/console-api.md#questions).
+
 ## Thread state machine
 
 ```text

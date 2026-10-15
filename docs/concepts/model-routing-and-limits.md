@@ -12,9 +12,12 @@ Rules are deterministic and applied when a run is queued, in this order (first m
 |---|---|---|---|
 | 1 | The agent called `escalate` on this thread | `opus` | high |
 | 2 | Two or more failed runs of this agent on this thread | `opus` | high |
-| 3 | Triggering message is `answer`, `notify` or `ask` | `haiku` | low |
-| 4 | Thread severity is `high` and the agent's default is `haiku` | `sonnet` | medium |
-| 5 | Anything else (`request`, `verify`, `decision`, `approval`) | the agent's default model | medium |
+| 3 | Triggering message is an `answer` that continues the work: a verification result (an answer to a `verify`) or the user's reply to the agent | the agent's default model | medium |
+| 4 | Triggering message is `answer`, `notify` or `ask` | `haiku` | low |
+| 5 | Thread severity is `high` and the agent's default is `haiku` | `sonnet` | medium |
+| 6 | Anything else (`request`, `verify`, `decision`, `approval`) | the agent's default model | medium |
+
+A plain `answer` is a short task and goes to Haiku. An answer that continues the work usually fixes something or asks for approval, so it runs on the agent's default model. The stored reason for that case is `answer that continues the work (verification result or the user's reply): agent default model`.
 
 Every run stores the reason (visible in `fh runs <workspace>`), for example `high severity with a Haiku default agent`. An escalation applies to the next run of that agent on that thread only.
 

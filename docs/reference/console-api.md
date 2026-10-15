@@ -27,8 +27,8 @@ Status: **implemented**. JSON bodies and responses unless stated. Validation err
 | Endpoint | Returns |
 |---|---|
 | `GET /api/workspaces` | `[{id, name}]` |
-| `GET /api/workspaces/:ws/agents` | Agents with their current run, queued count, last run state, runs in the last day, and their desired and container state (see [Agent containers](#agent-containers-and-the-supervisor)) |
-| `GET /api/workspaces/:ws/threads` | Threads (all columns, including `repo_id` and `branch`) with message count, participants and `waiting_on_you` |
+| `GET /api/workspaces/:ws/agents` | Agents with their current run, queued count, last run state, runs in the last day, their desired and container state (see [Agent containers](#agent-containers-and-the-supervisor)) and `waiting_thread`: the thread where the agent waits for your answer, or `null` |
+| `GET /api/workspaces/:ws/threads` | Threads (all columns, including `repo_id` and `branch`) with message count, participants, `waiting_on_you`, `waiting_reason` and `waiting_message_id` (see [Questions](#questions)). Threads waiting on you come first |
 | `GET /api/workspaces/:ws/runs?limit=50` | Recent runs (max 500) |
 | `GET /api/workspaces/:ws/usage` | Latest usage reading, or `{}` |
 | `GET /api/workspaces/:ws/repos` | `[{id, upstream_url, provider, base_branch, ...}]` |
@@ -37,7 +37,7 @@ Status: **implemented**. JSON bodies and responses unless stated. Validation err
 | `GET /api/threads/:id/reviewers?q=<text>` | Possible pull request reviewers for a repository thread (below) |
 | `GET /api/settings` | Machine-wide settings, for example `{"allow_host_runners": false}` |
 | `GET /api/supervisor` | `{online, seen_at}`: `online` is `true` when the supervisor reported in the last 30 seconds |
-| `GET /api/threads/:id` | `{thread, messages, runs}`; 404 if unknown |
+| `GET /api/threads/:id` | `{thread, messages, runs, questions}`; 404 if unknown. Messages carry `options` (see [Questions](#questions)) |
 | `GET /api/threads/:id/diff` | A **BranchDiff** for a repository thread (below) |
 | `GET /api/threads/:id/approvals` | The thread's approvals, newest first |
 | `GET /api/runs/:id/events?after=0` | Run events after the given event id |
@@ -78,6 +78,26 @@ What the thread branch changes compared with the base branch, since they diverge
 | `pull_request` | `{"branch": "fh/THR-0001", "commit": "<sha>", "pr": {"id", "url", "status": "open" \| "merged" \| "closed"}, "warnings"?}` |
 
 `warnings` lists non-fatal problems, such as a reviewer that could not be added.
+
+### Questions
+
+**Status: implemented.** Messages have `options: string[] | null`: the answer choices of an `ask` to you, otherwise `null`.
+
+`GET /api/threads/:id` returns `questions`, every question an agent asked you in the thread:
+
+```json
+[{"message_id": 12, "from_actor": "atlas", "body": "Should roundCents accept strings?",
+  "options": ["Keep number-only input", "Coerce with Number()"],
+  "created_at": "2026-10-14T16:20:05.000Z", "answered_by": 15}]
+```
+
+`answered_by` is the id of your first later message to that agent (or a reply to it), and `null` while the question is open.
+
+Thread rows from `GET /api/workspaces/:ws/threads` carry the waiting state:
+
+- `waiting_on_you`: `true` when the thread is not `done` or `cancelled` and has an open question to you, a pending approval, or a pending permission request. Notices and completions do not count.
+- `waiting_reason`: `question`, `approval`, `permission` or `null`.
+- `waiting_message_id`: the message that asked (for a question), or `null`.
 
 ## Workspaces and agents
 

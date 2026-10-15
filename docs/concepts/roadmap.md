@@ -54,13 +54,13 @@ Done:
 - Workspaces and agents created and edited in the console; host access (GitHub, Azure DevOps tokens) per agent
 - Supervisor on the host (`fh supervise`): starts, stops, restarts and replaces agent containers to match the desired state set in the console or with `fh agent run` and `fh agent stop`; restarts crashed containers with backoff; `fh supervise --install` runs it as a systemd user service
 - `fh setup` installs the `fh` command (`~/.local/bin/fh`), so the commands the console shows work as written
+- Questions to the user stand out: a "Waiting on you" badge on threads and agents; a pinned card with the short question first and the `ask` `options` as buttons; a jump button to the message that asked; the thread's questions listed, open and answered. Notifications outside the console stay planned under F6
+- Routing: an answer that continues the work (a verification result, or your reply to an agent) runs on the agent's default model; other answers still route to Haiku
 
 Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
 - A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts (F3)
-- Questions to the user stand out: a "Waiting on you" badge on threads and agents; a pinned "Needs you" card with the short question first and optional answer `options` on `ask` shown as buttons; a jump button (like a mention in a chat app) that scrolls the history to the message that asked, and keeps past questions pinned so you can find them again (F3)
-- Routing: an answer to a `verify` runs on the agent's default model, since it usually means fixing or asking for approval (today it routes to Haiku as a short answer)
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
 - Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2
