@@ -72,6 +72,18 @@ export const RunClaim = z.object({
   hostAccess: z
     .array(z.object({ provider: z.enum(["github", "azure-devops"]), token: z.string().min(1) }))
     .default([]),
+  /**
+   * What the agent knows, delivered with every run: the workspace's shared knowledge (written by
+   * the user), and the agent's own memory and skills (what it learned). The runner installs them
+   * as Claude Code's user memory (~/.claude/CLAUDE.md) and user skills (~/.claude/skills).
+   */
+  context: z
+    .object({
+      knowledge: z.string().default(""),
+      memory: z.array(z.object({ path: z.string(), content: z.string() })).default([]),
+      skills: z.array(z.object({ name: z.string(), files: z.array(z.object({ path: z.string(), content: z.string() })) })).default([]),
+    })
+    .default({ knowledge: "", memory: [], skills: [] }),
   /** Repository checkout for the run, or null for threads without a repo. */
   repo: z
     .object({ id: z.string(), base: z.string(), branch: z.string() })
