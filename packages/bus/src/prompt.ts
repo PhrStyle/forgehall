@@ -7,7 +7,7 @@ const who = (actor: string) => (actor === HUMAN ? "the user" : actor);
  * Prompt for one run: a bus header plus every message delivered in this run.
  * Messages from other agents are framed as data; only the user's messages carry their authority.
  */
-export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: MessageRow[]; resumed: boolean; hostAccess?: string[] }): string {
+export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: MessageRow[]; resumed: boolean; hostAccess?: string[]; team?: { id: string; name: string; role: string }[] }): string {
   const { agent, thread, messages } = p;
   const lines: string[] = [];
   lines.push(`[forgehall] workspace ${thread.workspace_id} · thread ${thread.id} "${thread.title}" · state: ${thread.state}`);
@@ -30,6 +30,10 @@ export function buildPrompt(p: { agent: AgentRow; thread: ThreadRow; messages: M
   if (access.length) {
     const vars: Record<string, string> = { github: "GH_TOKEN (GitHub)", "azure-devops": "AZURE_DEVOPS_EXT_PAT (Azure DevOps)" };
     lines.push(`Host access: ${access.map((h) => vars[h] ?? h).join(", ")} in your environment, with whatever rights the token has. Use it only for this thread's task; never print it. Commands that use it may need the user's permission.`);
+    lines.push("");
+  }
+  if (p.team?.length) {
+    lines.push(`Colleagues in this workspace (address them by id): ${p.team.map((a) => `${a.id} (${a.name}, ${a.role})`).join("; ")}. The user is "${HUMAN}".`);
     lines.push("");
   }
   lines.push("How to act:");

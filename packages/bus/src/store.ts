@@ -332,9 +332,16 @@ export class Store {
     return this.sql.begin(async (tx) => {
       const [thread] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${m.threadId} FOR UPDATE`;
       if (!thread || thread.workspace_id !== m.workspaceId) throw new BusError(`thread ${m.threadId} does not exist in this workspace`);
+      if (m.to.toLowerCase() === HUMAN) m = { ...m, to: HUMAN };
       if (m.to !== HUMAN) {
-        const [target] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${m.workspaceId} AND id = ${m.to}`;
-        if (!target) throw new BusError(`agent ${m.to} does not exist in this workspace`);
+        // Agents sometimes address a colleague by name ("Vigil"): accept the id or the name, any case.
+        const [target] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${m.workspaceId}
+          AND (id = ${m.to} OR lower(id) = lower(${m.to}) OR lower(name) = lower(${m.to})) ORDER BY (id = ${m.to}) DESC LIMIT 1`;
+        if (!target) {
+          const ids = (await tx<{ id: string }[]>`SELECT id FROM agents WHERE workspace_id = ${m.workspaceId} ORDER BY id`).map((a) => a.id);
+          throw new BusError(`agent ${m.to} does not exist in this workspace; agents: ${ids.join(", ")}, or "${HUMAN}" for the user`);
+        }
+        m = { ...m, to: target.id };
         if (m.type === "request" && target.accepts_from.length > 0 && m.from !== HUMAN && !target.accepts_from.includes(m.from)) {
           throw new BusError(`${m.to} does not accept requests from ${m.from}`);
         }
@@ -448,6 +455,8 @@ export class Store {
       // A new run starts from the escalation it was routed with; clear the flag for the next one.
       await tx`UPDATE threads SET flags = flags #- ${["escalate", agent.id]} WHERE id = ${run.thread_id}`;
       const hostAccess = await this.agentHostAccess(agent.workspace_id, agent.id);
+      const team = await tx<{ id: string; name: string; role: string }[]>`SELECT id, name, role FROM agents
+        WHERE workspace_id = ${agent.workspace_id} AND id <> ${agent.id} ORDER BY id`;
       return {
         runId: Number(run.id),
         workspaceId: agent.workspace_id,
@@ -457,7 +466,7 @@ export class Store {
         effort: run.effort,
         routeReason: run.route_reason,
         sessionId: session?.session_id ?? null,
-        prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session), hostAccess: hostAccess.map((h) => h.provider) }),
+        prompt: buildPrompt({ agent, thread: thread!, messages: pending, resumed: Boolean(session), hostAccess: hostAccess.map((h) => h.provider), team: [...team] }),
         agentPrompt: agent.config.prompt ?? "",
         allowedTools: rulesFor(mode, agent.config.permissions).allow,
         permissions: rulesFor(mode, agent.config.permissions),

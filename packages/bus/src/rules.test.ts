@@ -73,6 +73,11 @@ describe("buildPrompt", () => {
     expect(p).toContain("thread_id: THR-0001");
   });
 
+  it("lists colleagues by id", () => {
+    const p = buildPrompt({ agent, thread, messages: [], resumed: true, team: [{ id: "atlas", name: "Atlas", role: "Dev" }] });
+    expect(p).toContain("atlas (Atlas, Dev)");
+  });
+
   it("asks for approval instead of complete when the thread has a repository", () => {
     const withRepo = { ...thread, repo_id: "checkout-app", branch: "fh/THR-0001" } as ThreadRow;
     expect(buildPrompt({ agent, thread: withRepo, messages: [], resumed: true })).toContain("call request_approval");
