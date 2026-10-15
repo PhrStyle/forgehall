@@ -30,6 +30,9 @@ export function buildHttp(store: Store, opts: HttpOptions): FastifyInstance {
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof BusError) return reply.code(409).send({ error: err.message });
     if (err instanceof z.ZodError) return reply.code(400).send({ error: "invalid payload", issues: err.issues });
+    // Fastify's own client errors (malformed body, wrong content type) keep their status and message.
+    const status = (err as { statusCode?: number }).statusCode;
+    if (status && status >= 400 && status < 500) return reply.code(status).send({ error: (err as Error).message });
     app.log.error(err);
     return reply.code(500).send({ error: "internal error" });
   });
