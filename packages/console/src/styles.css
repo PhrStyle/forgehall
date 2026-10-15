@@ -618,6 +618,8 @@ table.tbl{width:100%;border-collapse:collapse;max-width:1000px;font-size:12.5px}
 .sch-card .switch{margin:0}
 .sch-actions{position:absolute;right:56px;top:50%;transform:translateY(-50%);display:none;gap:2px;background:var(--sel);border-radius:var(--r);padding:2px}
 .sch-card:hover .sch-actions,.sch-card:focus-within .sch-actions{display:flex}
+/* Without a mouse there is no hover: keep Run, Edit and History reachable. */
+@media (hover: none){.sch-actions{display:flex;position:static;transform:none;margin-top:4px}}
 .sch-modal{width:min(560px,100%)}
 .sch-fs{border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin:0;display:flex;flex-direction:column;gap:10px;min-width:0}
 .sch-fs legend{font-size:11.5px;color:var(--muted);padding:0 4px}
