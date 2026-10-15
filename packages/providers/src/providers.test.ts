@@ -45,6 +45,12 @@ describe("detectProvider / parseRepoUrl", () => {
     expect(parseRepoUrl("https://dev.azure.com/acme/Shop%20Floor/_git/check%20out").repo).toBe("check out");
   });
 
+  it("parses the short Azure DevOps form where the project is named like the repository", () => {
+    expect(parseRepoUrl("https://dev.azure.com/acme/_git/checkout")).toEqual({
+      provider: "azure-devops", apiBase: "https://dev.azure.com/acme", owner: "acme", project: "checkout", repo: "checkout",
+    });
+  });
+
   it("parses visualstudio.com URLs", () => {
     const expected = { provider: "azure-devops", apiBase: "https://acme.visualstudio.com", owner: "acme", project: "Shop", repo: "checkout" };
     expect(parseRepoUrl("https://acme.visualstudio.com/Shop/_git/checkout")).toEqual(expected);
