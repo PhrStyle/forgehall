@@ -56,6 +56,10 @@ Done:
 Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
-- A full `pull_request` run against a real GitHub or Azure DevOps project; reviewer comments back to the agent; pull requests opened when verification starts (F3)
+- A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts (F3)
+- Questions to the user stand out: a pinned "Needs you" card with the short question first, optional answer `options` on `ask` shown as buttons, a "Waiting on you" badge on threads and agents (F3)
+- Routing: an answer to a `verify` runs on the agent's default model, since it usually means fixing or asking for approval (today it routes to Haiku as a short answer)
+- A supervisor on the host (`fh supervise`) that starts, stops and restarts agent containers from the console, so new agents start without a command (F3)
+- `fh setup` installs the `fh` command, so the commands the console shows work as written
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
