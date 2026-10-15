@@ -4,6 +4,8 @@ import { api, type RepoProvider, type RepoRow } from "../api";
 import { usePublishing, useRepos } from "../queries";
 import { slugify } from "../util";
 import { Chip, ErrorBox } from "../ui";
+import { FieldError, focusFirstInvalid } from "./formErrors";
+import "../styles/agent-settings.css";
 
 const ID_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 export const HOST_LABEL: Record<RepoProvider, string> = { github: "GitHub", "azure-devops": "Azure DevOps", local: "Local" };
@@ -38,6 +40,8 @@ export function AddRepoModal({ ws, onClose, onAdded }: { ws: string; onClose: ()
   const [idTouched, setIdTouched] = useState(false);
   const [base, setBase] = useState("main");
   const first = useRef<HTMLInputElement>(null);
+  const idRef = useRef<HTMLInputElement>(null);
+  const [tried, setTried] = useState(false);
   useEffect(() => first.current?.focus(), []);
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopImmediatePropagation(); onClose(); } };
@@ -58,16 +62,27 @@ export function AddRepoModal({ ws, onClose, onAdded }: { ws: string; onClose: ()
   const missingCred = provider && provider !== "local" && creds && !creds.some((c) => c.provider === provider);
   const idOk = ID_RE.test(id);
   const dup = idOk && repos.some((r) => r.id.toLowerCase() === id.toLowerCase());
-  const valid = upstream.trim() !== "" && idOk && !dup && !m.isPending;
-  const submit = (e: FormEvent) => { e.preventDefault(); if (valid) m.mutate(); };
+  const errs = {
+    upstream: upstream.trim() ? null : "Enter the repository URL.",
+    id: dup ? "A repository with this ID already exists." : idOk ? null : id ? "Use letters, digits, dots, dashes and underscores, starting with a letter or digit." : "ID is required.",
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setTried(true);
+    if (focusFirstInvalid([[errs.upstream, first.current], [errs.id, idRef.current]])) return;
+    if (!m.isPending) m.mutate();
+  };
+  const shownUp = tried ? errs.upstream : null;
+  const shownId = dup || tried ? errs.id : null;
 
   return (
     <div className="scrim modal" onMouseDown={(e) => { if (e.target === e.currentTarget && !m.isPending) onClose(); }}>
-      <form className="modal-box" role="dialog" aria-modal="true" aria-label="Add repository" onSubmit={submit}>
+      <form className="modal-box" role="dialog" aria-modal="true" aria-label="Add repository" onSubmit={submit} noValidate>
         <h3>Add repository</h3>
         <label className="field">Upstream URL
-          <input ref={first} value={upstream} spellCheck={false} placeholder="https://github.com/acme/checkout-app or https://dev.azure.com/acme/Shop/_git/checkout-app"
+          <input ref={first} value={upstream} spellCheck={false} aria-invalid={!!shownUp} aria-describedby="ar-up-err" placeholder="https://github.com/acme/checkout-app or https://dev.azure.com/acme/Shop/_git/checkout-app"
             onChange={(e) => { setUpstream(e.target.value); if (!idTouched) setId(slugify(repoName(e.target.value))); }} />
+          <FieldError id="ar-up-err" msg={shownUp} />
           <span className="faint">
             {provider ? <>Host: <Chip tone={provider === "local" ? undefined : "sonnet"}>{HOST_LABEL[provider]}</Chip> · </> : null}
             Local paths: use <code>fh repo add</code>.
@@ -77,10 +92,9 @@ export function AddRepoModal({ ws, onClose, onAdded }: { ws: string; onClose: ()
           <div className="warnbox" role="status">No {HOST_LABEL[provider]} token for this workspace: add one in Settings → Publishing first (needed for private repositories).</div>
         )}
         <label className="field">ID
-          <input className="mono" value={id} maxLength={60} aria-invalid={id !== "" && (!idOk || dup)} onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
-          {dup
-            ? <span style={{ color: "var(--err)" }}>A repository with this ID already exists.</span>
-            : <span className="faint">Letters, digits, dots, dashes and underscores. Used in commands.</span>}
+          <input ref={idRef} className="mono" value={id} maxLength={60} aria-invalid={!!shownId || (id !== "" && !idOk)} aria-describedby="ar-id-err" onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
+          <FieldError id="ar-id-err" msg={shownId} />
+          {!shownId && <span className="faint">Letters, digits, dots, dashes and underscores. Used in commands.</span>}
         </label>
         <label className="field">Base branch
           <input className="mono" value={base} onChange={(e) => setBase(e.target.value)} placeholder="main" />
@@ -88,7 +102,7 @@ export function AddRepoModal({ ws, onClose, onAdded }: { ws: string; onClose: ()
         <ErrorBox error={m.error} />
         <div className="row-end">
           <button type="button" className="btn" onClick={onClose} disabled={m.isPending}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={!valid}>{m.isPending ? "Cloning…" : "Add repository"}</button>
+          <button type="submit" className="btn primary" disabled={m.isPending}>{m.isPending ? "Cloning…" : "Add repository"}</button>
         </div>
       </form>
     </div>

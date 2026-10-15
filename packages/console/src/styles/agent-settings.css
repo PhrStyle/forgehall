@@ -1,0 +1,49 @@
+/* Agent page, run feed, settings sections and form errors. Owned by these components only. */
+
+/* Form errors */
+.field-err{color:var(--err);font-size:12px}
+.field input[aria-invalid="true"],.field textarea[aria-invalid="true"],.field select[aria-invalid="true"]{border-color:var(--err)}
+
+/* Agent header */
+.agent-meta{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.agent-meta .role{color:var(--muted)}
+.chip.quiet{background:transparent;color:var(--muted);border-color:var(--line)}
+a.status-link{text-decoration:none;color:inherit}
+a.status-link:hover .chip,a.status-link:hover .wait-badge{filter:brightness(1.2)}
+.status-line{font-size:12px;margin:2px 0 0}
+
+/* Planned (empty) panels */
+.planned{max-width:640px}
+
+/* Run feed: quiet tool lines */
+.ev-tool{font-size:12.5px;color:var(--muted)}
+.ev-tool > summary{list-style:none;cursor:pointer;display:flex;gap:8px;align-items:baseline;min-width:0;padding:1px 0}
+.ev-tool > summary::-webkit-details-marker{display:none}
+.ev-tool > summary::before{content:"▸";font-size:10px;color:var(--faint);flex:none}
+.ev-tool[open] > summary::before{content:"▾"}
+.ev-tool > summary:hover{color:var(--fg)}
+.ev-tool .tname{font-family:var(--font-mono);color:var(--fg);flex:none}
+.ev-tool .tsum{font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.ev-tool time{flex:none;color:var(--faint);font-family:var(--font-mono);font-size:11px}
+.ev-tool.err > summary{color:var(--err)}
+.ev-tool .card.tool{margin-top:4px}
+.ev .body .md{max-width:80ch}
+
+/* Settings layout */
+.st-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;align-items:start}
+.st-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:0}
+.st-nav h2{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--faint);margin:14px 10px 4px}
+.st-nav h2:first-child{margin-top:0}
+.st-nav a{padding:6px 10px;border-radius:var(--r);color:var(--muted);text-decoration:none;font-size:13px}
+.st-nav a:hover{color:var(--fg);background:var(--panel)}
+.st-nav a[aria-current="page"]{color:var(--fg);background:var(--panel)}
+.st-sec{min-width:0;max-width:760px}
+.st-head{margin:0 0 14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.st-head h2{margin:0;font-size:16px;font-weight:600}
+.st-head p{margin:4px 0 0;color:var(--muted);font-size:12.5px}
+.st-sub{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:18px 0 8px;font-size:13px;font-weight:600}
+@media (max-width:760px){
+  .st-layout{grid-template-columns:minmax(0,1fr);gap:16px}
+  .st-nav{flex-direction:row;flex-wrap:wrap;position:static;gap:4px;align-items:center}
+  .st-nav h2{width:100%;margin:8px 0 0}
+}

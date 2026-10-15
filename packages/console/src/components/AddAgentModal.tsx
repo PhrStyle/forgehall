@@ -8,6 +8,8 @@ import { ErrorBox } from "../ui";
 import { AcceptsFrom, IdentityField, ModelSelect } from "./AgentForm";
 import { CopyCommand } from "./CopyCommand";
 import { useSupervisor } from "../queries";
+import { FieldError, focusFirstInvalid } from "./formErrors";
+import "../styles/agent-settings.css";
 
 export function AddAgentModal() {
   const app = useApp();
@@ -23,6 +25,9 @@ export function AddAgentModal() {
   const [from, setFrom] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
   const first = useRef<HTMLInputElement>(null);
+  const idRef = useRef<HTMLInputElement>(null);
+  const roleRef = useRef<HTMLInputElement>(null);
+  const [tried, setTried] = useState(false);
   const close = () => app.setAddAgentOpen(false);
   useEffect(() => first.current?.focus(), []);
   useEffect(() => {
@@ -36,8 +41,18 @@ export function AddAgentModal() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["agents"] }); },
   });
   const idOk = /^[a-z0-9][a-z0-9-]{0,39}$/.test(id);
-  const valid = name.trim().length > 0 && role.trim().length > 0 && idOk;
-  const submit = (e: FormEvent) => { e.preventDefault(); if (valid && !m.isPending) m.mutate(); };
+  const errs = {
+    name: name.trim() ? null : "Name is required.",
+    id: idOk ? null : id ? "Use lowercase letters, digits and dashes, starting with a letter or digit." : "ID is required.",
+    role: role.trim() ? null : "Role is required.",
+  };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setTried(true);
+    if (focusFirstInvalid([[errs.name, first.current], [errs.id, idRef.current], [errs.role, roleRef.current]])) return;
+    if (!m.isPending) m.mutate();
+  };
+  const shown = (k: keyof typeof errs) => (tried ? errs[k] : null);
 
   return (
     <div className="scrim modal" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -58,17 +73,20 @@ export function AddAgentModal() {
           <div className="row-end"><button className="btn primary" autoFocus onClick={close}>Done</button></div>
         </div>
       ) : (
-        <form className="modal-box" role="dialog" aria-modal="true" aria-label="Add agent" onSubmit={submit}>
+        <form className="modal-box" role="dialog" aria-modal="true" aria-label="Add agent" onSubmit={submit} noValidate>
           <h3>Add agent</h3>
           <label className="field">Name
-            <input ref={first} value={name} maxLength={60} placeholder="Atlas" onChange={(e) => { setName(e.target.value); if (!idTouched) setId(slugify(e.target.value)); }} />
+            <input ref={first} value={name} maxLength={60} placeholder="Atlas" aria-invalid={!!shown("name")} aria-describedby="aa-name-err" onChange={(e) => { setName(e.target.value); if (!idTouched) setId(slugify(e.target.value)); }} />
+            <FieldError id="aa-name-err" msg={shown("name")} />
           </label>
           <label className="field">ID
-            <input className="mono" value={id} maxLength={40} aria-invalid={id !== "" && !idOk} onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
+            <input ref={idRef} className="mono" value={id} maxLength={40} aria-invalid={(id !== "" || tried) && !idOk} aria-describedby="aa-id-err" onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
+            <FieldError id="aa-id-err" msg={shown("id")} />
             <span className="faint">Lowercase letters, digits and dashes. Cannot be changed later.</span>
           </label>
           <label className="field">Role
-            <input value={role} maxLength={60} placeholder="Dev, QA, Research…" onChange={(e) => setRole(e.target.value)} />
+            <input ref={roleRef} value={role} maxLength={60} placeholder="Dev, QA, Research…" aria-invalid={!!shown("role")} aria-describedby="aa-role-err" onChange={(e) => setRole(e.target.value)} />
+            <FieldError id="aa-role-err" msg={shown("role")} />
           </label>
           <ModelSelect value={model} onChange={setModel} />
           <AcceptsFrom others={others} value={from} onChange={setFrom} />
@@ -76,7 +94,7 @@ export function AddAgentModal() {
           <ErrorBox error={m.error} />
           <div className="row-end">
             <button type="button" className="btn" onClick={close}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={!valid || m.isPending}>{m.isPending ? "Adding…" : "Add agent"}</button>
+            <button type="submit" className="btn primary" disabled={m.isPending}>{m.isPending ? "Adding…" : "Add agent"}</button>
           </div>
         </form>
       )}
