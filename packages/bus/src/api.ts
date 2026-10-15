@@ -5,6 +5,7 @@ import { z } from "zod";
 import { PLANS } from "./accounts.js";
 import { isAdmin } from "./admin.js";
 import { CHANGES_CHANNEL, type Change, type Store } from "./store.js";
+import { Schedules } from "./schedules.js";
 
 /**
  * Console API: read models, human actions and a live change stream (SSE).
@@ -63,6 +64,39 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
     return reply.code(204).send();
   });
   app.get("/api/supervisor", async () => store.supervisorStatus());
+
+  // Schedules: the bus opens a thread for the agent when one is due.
+  const schedules = new Schedules(store);
+  const ScheduleBody = z.object({
+    agent: z.string().min(1),
+    title: z.string().min(1).max(120),
+    prompt: z.string().min(1).max(20_000),
+    repo: z.string().nullable().optional(),
+    rule: z.unknown(),
+    timezone: z.string().min(1).max(64),
+    thread_mode: z.enum(["new", "same"]).default("new"),
+    skip_if_open: z.boolean().default(true),
+    skip_usage_above: z.number().nullable().default(null),
+    enabled: z.boolean().optional(),
+  });
+  app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/schedules", async (req) => schedules.list(req.params.ws));
+  app.post<{ Params: { ws: string } }>("/api/workspaces/:ws/schedules", async (req, reply) =>
+    reply.code(201).send(await schedules.create(req.params.ws, ScheduleBody.parse(req.body))),
+  );
+  app.patch<{ Params: { id: string } }>("/api/schedules/:id", async (req) => schedules.update(req.params.id, ScheduleBody.partial().parse(req.body)));
+  app.delete<{ Params: { id: string } }>("/api/schedules/:id", async (req, reply) => {
+    await schedules.remove(req.params.id);
+    return reply.code(204).send();
+  });
+  app.post<{ Params: { id: string } }>("/api/schedules/:id/run", async (req, reply) => reply.code(201).send(await schedules.runNow(req.params.id)));
+  app.get<{ Params: { ws: string }; Querystring: { from?: string; to?: string } }>("/api/workspaces/:ws/schedules/calendar", async (req) => {
+    const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);
+    return schedules.calendar(req.params.ws, q.from, q.to);
+  });
+  app.post("/api/schedules/preview", async (req) => {
+    const b = z.object({ rule: z.unknown(), timezone: z.string().min(1) }).parse(req.body);
+    return schedules.preview(b.rule, b.timezone);
+  });
   app.get<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id/settings", async (req) => store.agentSettings(req.params.ws, req.params.id));
   app.patch<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id", async (req) => {
     const b = AgentBody.partial().parse(req.body);

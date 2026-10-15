@@ -186,7 +186,8 @@ export type Change =
   | { kind: "run"; workspace: string; thread: string; run: number; state: string }
   | { kind: "run_event"; workspace: string; run: number }
   | { kind: "agent"; workspace: string; agent: string }
-  | { kind: "permission"; workspace: string; permission: string; thread: string | null };
+  | { kind: "permission"; workspace: string; permission: string; thread: string | null }
+  | { kind: "schedule"; workspace: string };
 
 export const CHANGES_CHANNEL = "forgehall_changes";
 
@@ -417,7 +418,8 @@ export class Store {
           throw new BusError(`agent ${m.to} does not exist in this workspace; agents: ${ids.join(", ")}, or "${HUMAN}" for the user`);
         }
         m = { ...m, to: target.id };
-        if (m.type === "request" && target.accepts_from.length > 0 && m.from !== HUMAN && !target.accepts_from.includes(m.from)) {
+        // The user, and schedules the user set up (system), may always send requests.
+        if (m.type === "request" && target.accepts_from.length > 0 && m.from !== HUMAN && m.from !== SYSTEM && !target.accepts_from.includes(m.from)) {
           throw new BusError(`${m.to} does not accept requests from ${m.from}`);
         }
       }

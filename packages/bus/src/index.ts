@@ -4,6 +4,7 @@ import { registerApi } from "./api.js";
 import { registerGitHttp } from "./git-http.js";
 import { buildHttp } from "./http.js";
 import { Store } from "./store.js";
+import { Schedules } from "./schedules.js";
 
 export { connect, migrate } from "./db.js";
 export { Store, BusError, nextState } from "./store.js";
@@ -31,6 +32,14 @@ async function main() {
       (e) => app.log.error(e, "stale run check failed"),
     );
   }, 30_000);
+  // Schedules that are due open their threads.
+  const scheduler = new Schedules(store);
+  const scheduleTick = setInterval(() => {
+    scheduler.tick().then(
+      (n) => n && app.log.info({ schedules: n }, "schedules due"),
+      (e) => app.log.error(e, "schedule check failed"),
+    );
+  }, Number(process.env.SCHEDULE_TICK_SECONDS ?? 30) * 1000);
   // Pull requests the bus opened: their threads close when the host reports them merged.
   const prPoll = setInterval(() => {
     store.pollPullRequests().catch((e) => app.log.error(e, "pull request check failed"));
@@ -38,6 +47,7 @@ async function main() {
   app.addHook("onClose", async () => {
     clearInterval(reaper);
     clearInterval(prPoll);
+    clearInterval(scheduleTick);
   });
   if (applied.length) app.log.info({ applied }, "migrations applied");
   const port = Number(process.env.PORT ?? 4545);
