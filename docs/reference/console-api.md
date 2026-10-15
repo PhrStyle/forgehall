@@ -198,7 +198,7 @@ curl -s -X POST http://127.0.0.1:4545/api/approvals/4/decide \
 ```
 
 - GitHub: the repository's collaborators, filtered by login or name.
-- Azure DevOps: identity search.
+- Azure DevOps: members of the project's teams, matched on part of the name or login (case and accents ignored); for people outside the teams, the identities API (full name or e-mail).
 - `400` for a local repository, or when the workspace has no credential for that host.
 
 ## Publishing
