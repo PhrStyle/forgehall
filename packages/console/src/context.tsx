@@ -58,9 +58,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     timer.current = setTimeout(() => setToastMsg(null), ms);
   }, []);
 
+  const wsRef = useRef<string | null>(null);
+  wsRef.current = workspace;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((v) => !v); return; }
+      // "N" opens a new task unless the user is typing or another dialog is open.
+      if (e.key.toLowerCase() !== "n" || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat || e.defaultPrevented) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (!wsRef.current || document.querySelector('[role="dialog"], .palette')) return;
+      e.preventDefault();
+      setNewTaskTo(null); setNewTaskOpen(true); setPaletteOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

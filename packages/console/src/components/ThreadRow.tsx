@@ -16,7 +16,7 @@ export function ThreadRow({ t }: { t: ThreadOverview }) {
           {t.waiting_on_you && <WaitBadge reason={t.waiting_reason} />}
         </div>
         <div className="t2">
-          <People ids={t.participants ?? []} />
+          <People ids={(t.participants ?? []).filter((p) => p !== "system")} />
           <span>assignee <span className="mono">{t.assignee ?? "none"}</span></span>
           <span>{t.message_count} message{t.message_count === 1 ? "" : "s"}</span>
         </div>

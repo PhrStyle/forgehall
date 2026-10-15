@@ -1,10 +1,12 @@
-import { NavLink, Route, Routes, useMatch } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Route, Routes, useLocation, useMatch } from "react-router-dom";
 import { AppProvider, useApp } from "./context";
 import { LiveProvider, useLiveStatus } from "./live";
 import { useAgents, usePermissions, useThreads } from "./queries";
 import { Avatar, Icon, StatusChip, WaitBadge } from "./ui";
 import { agentStatus } from "./util";
-import { ContextPanel } from "./components/ContextPanel";
+import { UsageBlock } from "./components/ContextPanel";
+import { jumpTo } from "./components/Questions";
 import { AddAgentModal } from "./components/AddAgentModal";
 import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { NewTaskModal } from "./components/NewTaskModal";
@@ -12,6 +14,7 @@ import { Palette } from "./components/Palette";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { Team } from "./pages/Team";
 import { Threads } from "./pages/Threads";
+import { Inbox } from "./pages/Inbox";
 import { ThreadPage } from "./pages/ThreadPage";
 import { AgentPage } from "./pages/AgentPage";
 import { Settings } from "./pages/Settings";
@@ -38,17 +41,31 @@ function Shell() {
   const app = useApp();
   const live = useLiveStatus();
   const threads = useThreads(app.workspace);
-  const waiting = (threads.data ?? []).filter((t) => t.waiting_on_you).length;
+  const perms = usePermissions(app.workspace);
+  const waiting = (threads.data ?? []).filter((t) => t.waiting_on_you).length + (perms.data ?? []).length;
+  const loc = useLocation();
+
+  // Scroll to #msg-<id> once the thread timeline has rendered.
+  useEffect(() => {
+    const m = /^#msg-(.+)$/.exec(loc.hash);
+    if (!m) return;
+    let tries = 0;
+    const iv = window.setInterval(() => {
+      if (document.getElementById(`msg-${m[1]}`) || ++tries > 20) { window.clearInterval(iv); jumpTo(m[1]!); }
+    }, 150);
+    return () => window.clearInterval(iv);
+  }, [loc.pathname, loc.hash]);
 
   return (
     <div className="app">
       <nav className="rail" aria-label="Navigation">
         <div className="logo" aria-hidden="true">F</div>
-        <NavLink to="/" end className="rail-btn" title="Team"><Icon n="team" /></NavLink>
-        <NavLink to="/threads" className="rail-btn" title="Threads"><Icon n="threads" />{waiting > 0 && <span className="badge" />}</NavLink>
-        <NavLink to="/schedules" className="rail-btn" title="Schedules"><Icon n="calendar" /></NavLink>
+        <NavLink to="/" end className="rail-btn" title="Team"><Icon n="team" /><span>Team</span></NavLink>
+        <NavLink to="/threads" className="rail-btn" title="Threads"><Icon n="threads" /><span>Threads</span></NavLink>
+        <NavLink to="/inbox" className="rail-btn" title={waiting > 0 ? `Inbox, ${waiting} waiting on you` : "Inbox"}><Icon n="inbox" /><span>Inbox</span>{waiting > 0 && <b className="badge" aria-label={`${waiting} waiting on you`}>{waiting > 99 ? "99+" : waiting}</b>}</NavLink>
+        <NavLink to="/schedules" className="rail-btn" title="Schedules"><Icon n="calendar" /><span>Schedules</span></NavLink>
         <div className="spacer" />
-        <NavLink to="/settings" className="rail-btn" title="Settings"><Icon n="settings" /></NavLink>
+        <NavLink to="/settings" className="rail-btn" title="Settings"><Icon n="settings" /><span>Settings</span></NavLink>
       </nav>
 
       <Side />
@@ -65,6 +82,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Team />} />
           <Route path="/threads" element={<Threads />} />
+          <Route path="/inbox" element={<Inbox />} />
           <Route path="/threads/:id" element={<ThreadPage />} />
           <Route path="/agents/:id" element={<AgentPage />} />
           <Route path="/schedules" element={<Schedules />} />
@@ -73,7 +91,6 @@ function Shell() {
         </Routes>
       </main>
 
-      <ContextPanel />
       {app.paletteOpen && <Palette />}
       {app.newWorkspaceOpen && <NewWorkspaceModal />}
       {app.addAgentOpen && app.workspace && <AddAgentModal />}
@@ -118,8 +135,9 @@ function Side() {
         })}
         {app.workspace && agents.isSuccess && list.length === 0 && <li className="empty" style={{ padding: "8px 12px" }}>No agents yet. <button className="btn sm" onClick={() => app.setAddAgentOpen(true)}>Add agent</button></li>}
       </ul>
+      <UsageBlock />
       <div className="side-foot">
-        <button className="btn primary grow" disabled={!app.workspace} onClick={() => app.openNewTask()}>New task</button>
+        <button className="btn primary grow" disabled={!app.workspace} onClick={() => app.openNewTask()} title="New task (N)">New task <kbd>N</kbd></button>
       </div>
     </aside>
   );
