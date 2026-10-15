@@ -9,7 +9,7 @@ Forgehall is built in phases. Each phase ends with something you can run.
 | **F3** Console and providers | React console on the bus with live updates; `azure-devops` and `github` adapters | You approve in the console and the pull request appears on the provider |
 | **F4** Learning | Reflection, `learn/*` branches, review tab, consolidation | A proposed memory is approved and used in the next run |
 | **F5** VMs | Incus, network allowlist, snapshots | The F2 tests pass with agents in VMs |
-| **F6** Extras | Notifications, more agents (research, writing, data) | n/a |
+| **F6** Extras | Notifications when something waits on you (browser, then a chat app such as Telegram), more agents (research, writing, data) | n/a |
 
 Isolation technology: Docker (one container per agent, started with `fh agent run`; the bus runs in the compose stack) for F1 to F4, then Incus VMs (separate kernel, native snapshots, per-instance network ACL) in F5. The same base image serves both: Node 22, a pinned `claude`, git and the runner.
 
@@ -57,7 +57,7 @@ Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
 - A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts (F3)
-- Questions to the user stand out: a pinned "Needs you" card with the short question first, optional answer `options` on `ask` shown as buttons, a "Waiting on you" badge on threads and agents (F3)
+- Questions to the user stand out: a "Waiting on you" badge on threads and agents; a pinned "Needs you" card with the short question first and optional answer `options` on `ask` shown as buttons; a jump button (like a mention in a chat app) that scrolls the history to the message that asked, and keeps past questions pinned so you can find them again (F3)
 - Routing: an answer to a `verify` runs on the agent's default model, since it usually means fixing or asking for approval (today it routes to Haiku as a short answer)
 - A supervisor on the host (`fh supervise`) that starts, stops and restarts agent containers from the console, so new agents start without a command (F3)
 - `fh setup` installs the `fh` command, so the commands the console shows work as written
