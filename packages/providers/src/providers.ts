@@ -230,7 +230,34 @@ class AzureDevOpsProvider implements RepoProvider {
       : `https://${host.replace(/\.visualstudio\.com$/, "")}.vssps.visualstudio.com`;
   }
 
+  /**
+   * Reviewers are the members of the project's teams, matched on part of the name or login, ignoring
+   * case and accents ("joao" finds "João"). The identities API only matches a full name or e-mail,
+   * so it is the fallback for people outside the teams.
+   */
   async searchReviewers(query: string): Promise<Reviewer[]> {
+    const teams = asRecord(await call(this.fetchImpl, this.token, `${this.ref.apiBase}/_apis/projects/${encodeURIComponent(this.ref.project ?? "")}/teams?api-version=7.1`, { headers: this.headers }));
+    const people = new Map<string, Reviewer>();
+    for (const t of Array.isArray(teams.value) ? teams.value : []) {
+      const teamId = asRecord(t).id;
+      if (typeof teamId !== "string") continue;
+      const members = asRecord(await call(this.fetchImpl, this.token,
+        `${this.ref.apiBase}/_apis/projects/${encodeURIComponent(this.ref.project ?? "")}/teams/${encodeURIComponent(teamId)}/members?api-version=7.1`, { headers: this.headers }));
+      for (const m of Array.isArray(members.value) ? members.value : []) {
+        const i = asRecord(asRecord(m).identity);
+        if (typeof i.id !== "string" || !i.id || people.has(i.id)) continue;
+        const uniqueName = typeof i.uniqueName === "string" ? i.uniqueName : "";
+        people.set(i.id, { id: i.id, displayName: typeof i.displayName === "string" && i.displayName ? i.displayName : uniqueName, uniqueName });
+      }
+    }
+    const fold = (v: string) => v.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+    const q = fold(query.trim());
+    const matches = [...people.values()].filter((r) => fold(r.displayName).includes(q) || fold(r.uniqueName).includes(q));
+    if (matches.length > 0) return matches.slice(0, MAX_REVIEWERS);
+    return this.searchIdentities(query);
+  }
+
+  private async searchIdentities(query: string): Promise<Reviewer[]> {
     const url = `${this.identityBase}/_apis/identities?searchFilter=General&filterValue=${encodeURIComponent(query)}&queryMembership=None&api-version=7.1`;
     const data = asRecord(await call(this.fetchImpl, this.token, url, { headers: this.headers }));
     const out: Reviewer[] = [];

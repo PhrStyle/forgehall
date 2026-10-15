@@ -161,7 +161,23 @@ describe("Azure DevOps provider", () => {
     }
   });
 
-  it("searches identities on the vssps host", async () => {
+  it("searches reviewers among the project's team members, ignoring case and accents", async () => {
+    const team = (id: string, name: string, unique: string) => ({ identity: { id, displayName: name, uniqueName: unique } });
+    const dev = fakeFetch([
+      { status: 200, body: { value: [{ id: "t1" }, { id: "t2" }] } },
+      { status: 200, body: { value: [team("a", "Joana Lima", "joana@acme.test"), team("b", "Bruno Melo", "bruno@acme.test")] } },
+      { status: 200, body: { value: [team("a", "Joana Lima", "joana@acme.test"), team("c", "João Reis", "jreis@acme.test")] } },
+    ]);
+    const found = await createProvider(azRef, TOKEN, dev.fetchImpl).searchReviewers("joa");
+    expect(dev.calls[0]!.url).toBe("https://dev.azure.com/acme/_apis/projects/Shop%20Floor/teams?api-version=7.1");
+    expect(dev.calls[1]!.url).toBe("https://dev.azure.com/acme/_apis/projects/Shop%20Floor/teams/t1/members?api-version=7.1");
+    expect(found).toEqual([
+      { id: "a", displayName: "Joana Lima", uniqueName: "joana@acme.test" },
+      { id: "c", displayName: "João Reis", uniqueName: "jreis@acme.test" },
+    ]);
+  });
+
+  it("falls back to the identities API on the vssps host for people outside the teams", async () => {
     const body = {
       value: [
         { id: "a", providerDisplayName: "Ana", properties: { Mail: { $value: "ana@acme.test" }, Account: { $value: "ana@acme" } } },
@@ -169,17 +185,18 @@ describe("Azure DevOps provider", () => {
         { providerDisplayName: "No id" },
       ],
     };
-    const dev = fakeFetch([{ status: 200, body }]);
+    const noTeams = { status: 200, body: { value: [] } };
+    const dev = fakeFetch([noTeams, { status: 200, body }]);
     const found = await createProvider(azRef, TOKEN, dev.fetchImpl).searchReviewers("an a");
-    expect(dev.calls[0]!.url).toBe("https://vssps.dev.azure.com/acme/_apis/identities?searchFilter=General&filterValue=an%20a&queryMembership=None&api-version=7.1");
+    expect(dev.calls[1]!.url).toBe("https://vssps.dev.azure.com/acme/_apis/identities?searchFilter=General&filterValue=an%20a&queryMembership=None&api-version=7.1");
     expect(found).toEqual([
       { id: "a", displayName: "Ana", uniqueName: "ana@acme.test" },
       { id: "b", displayName: "Bob", uniqueName: "bob@acme" },
     ]);
 
-    const vs = fakeFetch([{ status: 200, body: { value: [] } }]);
+    const vs = fakeFetch([noTeams, { status: 200, body: { value: [] } }]);
     await createProvider(vsRef, TOKEN, vs.fetchImpl).searchReviewers("x");
-    expect(vs.calls[0]!.url).toBe("https://acme.vssps.visualstudio.com/_apis/identities?searchFilter=General&filterValue=x&queryMembership=None&api-version=7.1");
+    expect(vs.calls[1]!.url).toBe("https://acme.vssps.visualstudio.com/_apis/identities?searchFilter=General&filterValue=x&queryMembership=None&api-version=7.1");
   });
 });
 
