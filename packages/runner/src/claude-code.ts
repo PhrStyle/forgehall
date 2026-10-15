@@ -17,12 +17,6 @@ const MODEL_IDS: Record<string, string> = { haiku: "haiku", sonnet: "sonnet", op
  */
 export type BillingMode = "any" | "subscription-only";
 
-export function billingModeFrom(value: string | undefined): BillingMode {
-  if (value === undefined || value === "" || value === "any") return "any";
-  if (value === "subscription-only") return "subscription-only";
-  throw new Error(`FORGEHALL_BILLING must be "any" or "subscription-only", got "${value}"`);
-}
-
 /** Variables that make Claude Code bill per token instead of using a subscription login. */
 export const PAY_PER_USE_ENV = [
   "ANTHROPIC_API_KEY",
@@ -32,6 +26,23 @@ export const PAY_PER_USE_ENV = [
   "CLAUDE_CODE_USE_VERTEX",
   "CLAUDE_CODE_USE_FOUNDRY",
 ];
+
+/**
+ * Billing mode. By default it follows the credential: a subscription login (CLAUDE_CODE_OAUTH_TOKEN
+ * from `claude setup-token`) means subscription only, so a stray API key is ignored and paid extra
+ * usage stops the run. Only a runner given an API key and no subscription token bills per token.
+ * FORGEHALL_BILLING=any or subscription-only forces one or the other.
+ */
+export function billingModeFrom(value: string | undefined, env: NodeJS.ProcessEnv = {}): BillingMode {
+  if (value === "any") return "any";
+  if (value === "subscription-only") return "subscription-only";
+  if (value === undefined || value === "" || value === "auto") {
+    const subscription = Boolean(env.CLAUDE_CODE_OAUTH_TOKEN);
+    const payPerUse = PAY_PER_USE_ENV.some((k) => env[k]);
+    return subscription || !payPerUse ? "subscription-only" : "any";
+  }
+  throw new Error(`FORGEHALL_BILLING must be "auto", "any" or "subscription-only", got "${value}"`);
+}
 
 /** Engine environment with every pay-per-use credential removed. */
 export function subscriptionOnlyEnv(...sources: NodeJS.ProcessEnv[]): NodeJS.ProcessEnv {

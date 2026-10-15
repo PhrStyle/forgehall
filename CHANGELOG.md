@@ -33,6 +33,7 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 
 ### Changed
 
+- **Subscription-only billing is the default** with a subscription token: the runner ignores API keys and stops a run on paid extra usage without any setting. `FORGEHALL_BILLING` (now `auto` by default) only forces `any` or `subscription-only`.
 - Approving now publishes **one squashed commit** per approval, authored by the workspace identity, for every policy (it was a merge commit by "Forgehall" that kept the agents' commits). The agents' per-run commits stay in the staging remote.
 - `fh repo add` detects the host from the URL (`github`, `azure-devops`, else `local`) and strips credentials embedded in it.
 - **Agents run isolated by default.** Runners report a mode (`container`, `vm`, `host`) in `POST /runner/claim`; the bus answers `403` to `host` runners and the runner exits with an explanation, unless the setting `allow_host_runners` is on (console Settings, "Allow agents directly on this machine"). Host runs get no standing permissions and every tool use is asked. The mode is self-reported.

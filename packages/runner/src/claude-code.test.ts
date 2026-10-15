@@ -29,8 +29,12 @@ const rateLimit = (isUsingOverage: boolean) => ({ type: "rate_limit_event", rate
 const success = { type: "result", subtype: "success", session_id: "s1", result: "ok", total_cost_usd: 0.001, usage: { input_tokens: 1, output_tokens: 1 } };
 
 describe("billing mode", () => {
-  it("defaults to any and accepts only the two known values", () => {
-    expect(billingModeFrom(undefined)).toBe("any");
+  it("follows the credential by default and accepts the known values", () => {
+    expect(billingModeFrom(undefined, { CLAUDE_CODE_OAUTH_TOKEN: "t" })).toBe("subscription-only");
+    expect(billingModeFrom(undefined, { CLAUDE_CODE_OAUTH_TOKEN: "t", ANTHROPIC_API_KEY: "k" })).toBe("subscription-only");
+    expect(billingModeFrom(undefined, {})).toBe("subscription-only");
+    expect(billingModeFrom(undefined, { ANTHROPIC_API_KEY: "k" })).toBe("any");
+    expect(billingModeFrom("any", { CLAUDE_CODE_OAUTH_TOKEN: "t" })).toBe("any");
     expect(billingModeFrom("subscription-only")).toBe("subscription-only");
     expect(() => billingModeFrom("cheap")).toThrow();
   });

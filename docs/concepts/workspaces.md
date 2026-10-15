@@ -96,30 +96,15 @@ Reviewers are chosen at approval time (rather than fixed in config) because who 
 
 ## Billing
 
-**[now]** Forgehall uses whatever authentication you give Claude Code. If you only log in with a subscription (Pro, Max, Team) and set no API key, runs consume your plan limits and nothing else.
+**[now]** With a subscription login, agents use your plan and nothing else, with no setting to turn on. By default the runner follows its credential:
 
-Watch out for one thing: an `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`, or the Bedrock, Vertex and Foundry switches) in the runner's environment takes precedence over the subscription login, and those runs are billed per token.
+- **Subscription token** (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, the only kind Settings → Claude accounts accepts), or no credential in the environment (an interactive login): **subscription only**. The runner removes API-key variables (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, the Bedrock, Vertex and Foundry switches) from the engine's environment, and if the engine still reports a non-subscription credential (`apiKeySource` other than `none`) or paid extra usage (`isUsingOverage`), the run stops at once and the thread is blocked with the reason. At the plan limit, runs wait for the window to reset instead of buying extra usage.
+- **An API key and no subscription token**: the runner uses the API, billed per token, because that is what you configured.
 
-To make that impossible on your machine, run the runner with `FORGEHALL_BILLING=subscription-only` (`fh agent run` passes it to the container when it is set in your shell):
-
-- The runner removes those variables from the engine's environment.
-- If the engine still starts with a non-subscription credential (`apiKeySource` other than `none`) or reports paid overage (`isUsingOverage`), the run stops at once and the thread is blocked with a `subscription-only` explanation.
+`FORGEHALL_BILLING=any` or `subscription-only` forces one or the other; you normally do not set it.
 
 Dollar figures in the console and run records (`cost_usd`) are Claude Code's estimate at API prices. With a subscription login they are not charged.
 
 ## Claude accounts per workspace
 
-**[planned]** Each workspace declares which Claude account(s) it uses (for example a Team seat at work, a personal subscription at home). The runner injects the right credential (`CLAUDE_CODE_OAUTH_TOKEN`) into each run and each agent keeps its own Claude config directory, so switching accounts does not lose sessions.
-
-**[now]** One credential per runner: `fh agent run` passes the token from `claude setup-token` (`~/.config/forgehall/claude-token` or `CLAUDE_CODE_OAUTH_TOKEN`) to the container. Only the opt-in host runner can rely on the CLI's own login. Usage is read per workspace.
-
-Planned switching modes:
-
-| Mode | Behaviour |
-|---|---|
-| `single` (default) | One account. At the limit, the queue pauses. |
-| `manual` | Several accounts; you choose the active one. Fine when all are yours. |
-
-There is no automatic switch to another account when one reaches its limit. Anthropic's Usage Policy forbids using multiple accounts to get around restrictions, and an automatic failover exists only to do that. When the active account reaches its limit, the queue pauses until the limit resets. Fixed rules regardless of mode: only your own accounts, credentials stay on your machine, Forgehall is never run as a hosted service on other people's subscriptions. Pay-per-use accounts (API key, Bedrock, Vertex, Foundry) with a daily budget are also planned, for people who want them.
-
-See the [configuration reference](../reference/configuration.md) for the planned file formats.
+**[now]** You add your subscription accounts once in **Settings → Claude accounts** (a token from `claude setup-token`; API keys are refused) and pick one per workspace, for example a Team seat at work and a personal plan at home. `fh agent run` gives the workspace's token to the agent's container as `CLAUDE_CODE_OAUTH_TOKEN`. Tokens live in `~/.forgehall/secrets/claude/` (mode `0600`), never in the database or API responses. One account per workspace, switched by you: no automatic failover between accounts (see the decision log).

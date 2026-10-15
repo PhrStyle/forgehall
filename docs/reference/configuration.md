@@ -78,7 +78,7 @@ Read by `compose.yaml`. Do not commit it; it is machine-specific.
 | `WORK_ROOT` | `./.work` (`/home/agent/work` in the image) | Root of the agent's work area; each thread gets `WORK_ROOT/<thread-id>/` as the engine's working directory |
 | `CLAUDE_BIN` | `claude` | Claude Code executable |
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | Passed to the CLI to select the account. `fh agent run` sets it from your token file. On the host, if unset, the CLI uses its own login |
-| `FORGEHALL_BILLING` | `any` | `any`: use whatever authentication Claude Code is given. `subscription-only`: strip API-key variables and stop any run that is not on a subscription login or that uses paid overage. See [Billing](../concepts/workspaces.md#billing) |
+| `FORGEHALL_BILLING` | `auto` | `auto`: subscription only when the runner has a subscription token or no API key (removes API-key variables, stops a run on a non-subscription credential or paid extra usage); the API only when given an API key and no subscription token. `any` or `subscription-only` force one mode. See [Billing](../concepts/workspaces.md#billing) |
 
 The runner exits with an explanation when the bus answers `403` to its claim. Its environment is inherited by the `claude` process, which also gets `MCP_TOOL_TIMEOUT` of 20 minutes so a call waiting for your permission answer can last.
 

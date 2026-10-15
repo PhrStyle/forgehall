@@ -137,7 +137,7 @@ async function main() {
   if (!token) throw new Error("set AGENT_TOKEN (generated with `fh agent token <ws> <id>`)");
   const env: NodeJS.ProcessEnv = {};
   if (process.env.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = process.env.CLAUDE_CODE_OAUTH_TOKEN;
-  const billing = billingModeFrom(process.env.FORGEHALL_BILLING);
+  const billing = billingModeFrom(process.env.FORGEHALL_BILLING, process.env);
   const runner = new Runner(
     {
       busUrl: process.env.BUS_URL ?? "http://127.0.0.1:4545",
