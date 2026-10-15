@@ -63,3 +63,4 @@ Remaining:
 - Routing: an answer to a `verify` runs on the agent's default model, since it usually means fixing or asking for approval (today it routes to Haiku as a short answer)
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
+- Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2
