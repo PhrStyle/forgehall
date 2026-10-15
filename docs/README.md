@@ -42,6 +42,7 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 - [ADR 0006: Local git for agent data](adr/0006-local-git-for-agent-data.md)
 - [ADR 0007: The runner handles git, the bus hosts a staging remote](adr/0007-runner-handles-git-and-staging-remote.md)
 - [ADR 0008: Isolated agents, the bus in the stack, and permission requests](adr/0008-isolated-agents-and-permission-requests.md)
+- [ADR 0009: Host access per agent](adr/0009-host-access-per-agent.md)
 
 ## Project
 

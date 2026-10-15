@@ -13,6 +13,10 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 - **Host credentials** (Settings → Publishing): a write token per workspace and host, kept in `~/.forgehall/secrets/providers` (mode 0600), used only by the bus.
 - `@forgehall/providers`: GitHub and Azure DevOps clients (pull requests, reviewer search, status), URL parsing and git auth headers.
 - API: `GET`/`PATCH /api/workspaces/:ws/publishing`, `PUT`/`DELETE /api/workspaces/:ws/credentials/:provider`, `GET /api/threads/:id/reviewers`; `decide` accepts `reviewers` and `title`. Env `PR_POLL_SECONDS`.
+- **Console: New workspace and Add agent.** Create a workspace from the workspace switcher and an agent with the + next to AGENTS; an agent's Settings edits name, role, model, who can send it tasks and identity.
+- **Host access per agent** ([ADR 0009](docs/adr/0009-host-access-per-agent.md)): an agent can have its own GitHub or Azure DevOps token, given to its runs as environment variables. None by default. Set in the agent's Settings, under Host access per agent.
+- API: `POST /api/workspaces`, `POST /api/workspaces/:ws/agents`, `GET /api/workspaces/:ws/agents/:id/settings`, `PATCH /api/workspaces/:ws/agents/:id`, `PUT`/`DELETE /api/workspaces/:ws/agents/:id/credentials/:provider`.
+- Run claim (`POST /runner/claim`) has `hostAccess`: the agent's host tokens, mapped to fixed environment variables for the engine.
 
 ### Fixed
 

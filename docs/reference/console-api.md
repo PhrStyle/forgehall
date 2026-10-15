@@ -78,6 +78,33 @@ What the thread branch changes compared with the base branch, since they diverge
 
 `warnings` lists non-fatal problems, such as a reviewer that could not be added.
 
+## Workspaces and agents
+
+The console creates and edits workspaces and agents through these endpoints. The same can be done with `fh workspace add` and `fh agent add`.
+
+| Endpoint | Body | Effect |
+|---|---|---|
+| `POST /api/workspaces` | `{id, name}` | Creates a workspace. 201 with `{id, name}`. 400 if it exists |
+| `POST /api/workspaces/:ws/agents` | `{id, name, role, default_model, accepts_from?, prompt?}` | Creates an agent. 201 with AgentSettings. 400 if it exists |
+| `GET /api/workspaces/:ws/agents/:id/settings` | none | AgentSettings |
+| `PATCH /api/workspaces/:ws/agents/:id` | Any subset of `{name, role, default_model, accepts_from, prompt}` | Updates the agent. Returns AgentSettings |
+| `PUT /api/workspaces/:ws/agents/:id/credentials/:provider` | `{token}` | Stores the agent's host token. Returns `{provider, token_hint, created_at}` |
+| `DELETE /api/workspaces/:ws/agents/:id/credentials/:provider` | none | Removes the agent's host token. 204 |
+
+- `id` (workspace and agent): lowercase letters, digits and `-`, at most 40 characters, starting with a letter or digit. An agent id cannot be `you` or `system`.
+- `default_model`: `haiku`, `sonnet` or `opus`. `role`, `name` and `prompt` are free text.
+- `accepts_from`: an empty list means any agent may send requests to the agent; otherwise only the listed agents. You can always write to it.
+- `provider` is `github` or `azure-devops`. Whitespace is removed from `token`; a token under 20 characters is refused.
+- AgentSettings: `{id, name, role, default_model, accepts_from, prompt, permissions: {allow?, ask?, deny?}, credentials: [{provider, token_hint, created_at}]}`. Tokens are never returned.
+- Creating an agent does not start it. Start its container on the host with `fh agent run <ws> <id>`; the bus has no Docker access.
+
+```bash
+curl -s -X POST http://127.0.0.1:4545/api/workspaces/dev/agents \
+  -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)" \
+  -H 'content-type: application/json' \
+  -d '{"id":"atlas","name":"Atlas","role":"developer","default_model":"sonnet"}'
+```
+
 ## Act (as the user)
 
 | Endpoint | Body | Effect |

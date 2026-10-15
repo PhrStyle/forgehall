@@ -19,7 +19,19 @@ Legend: **[now]** implemented, **[planned]** not built yet.
 
 ## Agents
 
-An agent belongs to exactly one workspace. In phase 1 it is created with `fh agent add` and has an id, name, role, default model (`haiku`, `sonnet` or `opus`), an optional identity prompt (from a file) and an optional `accepts_from` list.
+An agent belongs to exactly one workspace. It has an id, name, role, default model (`haiku`, `sonnet` or `opus`), an optional identity prompt and an optional `accepts_from` list.
+
+**[now]** Create workspaces and agents with `fh workspace add` and `fh agent add`, or in the console: workspace switcher → **New workspace**; the **+** next to AGENTS in the sidebar → **Add agent**; on an agent's page, **Settings** edits name, role, model, who can send it tasks and identity. Creating an agent does not start it: run `fh agent run <ws> <id>` on the host.
+
+### Host access per agent
+
+**[now]** An agent can have its own token for a host (`github`, `azure-devops`), set with the API ([console API](../reference/console-api.md#workspaces-and-agents)) or in the agent's Settings. By default an agent has none. When the agent runs, the runner gives the engine the token as environment variables: `GH_TOKEN` and `GITHUB_TOKEN` for GitHub, `AZURE_DEVOPS_EXT_PAT` for Azure DevOps.
+
+- The token's scopes are the limit, so prefer a read-only one.
+- Commands that use it still go through permission requests unless you always allow them.
+- It is separate from the workspace publishing credential, which only the bus uses to push and open pull requests and which agents never receive.
+
+See [ADR 0009](../adr/0009-host-access-per-agent.md) and the [configuration reference](../reference/configuration.md).
 
 **[planned]** Agents defined as files under `workspaces/<ws>/agents/<id>/` (`agent.md` for identity, `agent.yaml` for model and permissions, `memory/`, `skills/`).
 
@@ -44,14 +56,15 @@ Git operations (clone, fetch, push a branch) use plain git and work with any hos
 
 Agents never write to the upstream, and they never run git. The runner checks out a thread's branch from the staging remote before a run and, after a successful one, commits the agent's file changes and pushes them to `fh/<THREAD-ID>`. A `pre-receive` hook accepts only `fh/*` branches and no deletions. Only the bus publishes to the upstream, after your approval. See [ADR 0007](../adr/0007-runner-handles-git-and-staging-remote.md), [ADR 0005](../adr/0005-provider-adapters-and-approval-policies.md) and the how-to [Work on a repository](../guides/work-on-a-repository.md).
 
-**[planned]** A read-only provider credential for agents (for example an Azure DevOps PAT with *Code (Read)*) to fetch from real providers, and other agents fetching a branch from the staging remote to verify it.
+Agents' host access is now per agent (see [Host access per agent](#host-access-per-agent)). Agents still do not fetch code from real providers directly: they use the staging remote, so they do not need provider access for code.
+
+**[planned]** Other agents fetching a branch from the staging remote to verify it.
 
 ```mermaid
 flowchart LR
-  P[(Provider<br/>GitHub / Azure DevOps)] -- fetch, read-only PAT --> A[Agent VMs]
-  A -- push work branch --> S[(Staging remote<br/>on the bus)]
+  A[Agent VMs] -- push work branch --> S[(Staging remote<br/>on the bus)]
   S -- fetch to verify --> A
-  S -- after approval: push + open PR --> P
+  S -- after approval: push + open PR --> P[(Provider<br/>GitHub / Azure DevOps)]
 ```
 
 ## Workspace rules and identity
