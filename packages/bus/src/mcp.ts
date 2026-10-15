@@ -2,6 +2,7 @@ import { HUMAN, Outcome } from "@forgehall/shared";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { BusError, type AgentRow, type Store } from "./store.js";
+import { Learning, skillFile } from "./learning.js";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -173,6 +174,60 @@ export function busMcpServer(store: Store, me: AgentRow, opts: McpOptions = { pe
         const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "complete", from: me.id, to: HUMAN, body: summary });
         return ok(`Thread ${thread_id} completed (message ${m.id}).`);
       }),
+  );
+
+  // Learning: the agent keeps its own memory and skills. Each change is recorded with its reason.
+  const learning = new Learning(store);
+  const name = z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).describe("short id, e.g. coupon-seed");
+  const reason = z.string().min(3).describe("why this is worth keeping, in one sentence");
+  const threadRef = z.string().optional().describe("the thread this comes from");
+  const learned = (r: { applied: boolean; proposal?: string }, what: string) =>
+    ok(r.applied ? `${what}. It is in your memory from your next run.` : `${what} proposed (proposal ${r.proposal}); it applies when the user approves.`);
+  server.registerTool(
+    "remember",
+    {
+      description:
+        "Keeps something in your memory for future threads: a fact about the codebase or tools, or how the user wants things done (corrections and preferences especially). " +
+        "Short and general, not specific to one task. Using an existing name replaces that memory (update instead of adding near-duplicates).",
+      inputSchema: { name, content: z.string().min(1).max(4000), reason, thread_id: threadRef },
+    },
+    ({ name, content, reason, thread_id }) =>
+      guard(async () => learned(await learning.propose(me, { action: "remember", name, content, reason, threadId: thread_id ?? null }), `Remembered ${name}`)),
+  );
+  server.registerTool(
+    "forget",
+    {
+      description: "Deletes one of your memories that turned out wrong or outdated.",
+      inputSchema: { name, reason, thread_id: threadRef },
+    },
+    ({ name, reason, thread_id }) =>
+      guard(async () => learned(await learning.propose(me, { action: "forget", name, reason, threadId: thread_id ?? null }), `Forgot ${name}`)),
+  );
+  server.registerTool(
+    "save_skill",
+    {
+      description:
+        "Saves a procedure you had to work out and will need again as a skill (Claude Code SKILL.md). The description says when to use it; the instructions are the steps. " +
+        "Using an existing name replaces that skill.",
+      inputSchema: {
+        name,
+        description: z.string().min(10).max(300).describe("when to use this skill, e.g. 'Use when releasing checkout-app: version bump, changelog, tag'"),
+        instructions: z.string().min(10).max(12_000).describe("the steps, in Markdown"),
+        reason,
+        thread_id: threadRef,
+      },
+    },
+    ({ name, description, instructions, reason, thread_id }) =>
+      guard(async () => learned(await learning.propose(me, { action: "save_skill", name, content: skillFile(name, description, instructions), reason, threadId: thread_id ?? null }), `Saved the skill ${name}`)),
+  );
+  server.registerTool(
+    "remove_skill",
+    {
+      description: "Removes one of your skills that is wrong or no longer useful.",
+      inputSchema: { name, reason, thread_id: threadRef },
+    },
+    ({ name, reason, thread_id }) =>
+      guard(async () => learned(await learning.propose(me, { action: "remove_skill", name, reason, threadId: thread_id ?? null }), `Removed the skill ${name}`)),
   );
 
   server.registerTool(

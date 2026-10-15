@@ -4,8 +4,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PLANS } from "./accounts.js";
 import { isAdmin } from "./admin.js";
-import { CHANGES_CHANNEL, type Change, type Store } from "./store.js";
+import { BusError, CHANGES_CHANNEL, type Change, type Store } from "./store.js";
 import { Schedules } from "./schedules.js";
+import { Learning } from "./learning.js";
+import { isSlug } from "./agent-data.js";
 
 /**
  * Console API: read models, human actions and a live change stream (SSE).
@@ -49,6 +51,7 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
     default_model: Model,
     accepts_from: z.array(z.string().max(40)).max(50).optional(),
     prompt: z.string().max(20_000).optional(),
+    require_learning_approval: z.boolean().optional(),
   });
   app.post<{ Params: { ws: string } }>("/api/workspaces/:ws/agents", async (req, reply) => {
     const b = AgentBody.extend({ id: Id }).parse(req.body);
@@ -64,6 +67,76 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
     return reply.code(204).send();
   });
   app.get("/api/supervisor", async () => store.supervisorStatus());
+
+  // Learning: shared knowledge (written by the user), each agent's memory and skills, the learning
+  // history with undo, proposals for agents that ask first, and "learn from this thread".
+  const learning = new Learning(store);
+  const notifyChange = async (c: Change) => {
+    await store.sql`SELECT pg_notify(${CHANGES_CHANNEL}, ${JSON.stringify(c)})`;
+  };
+  const wsExists = async (ws: string) => {
+    if (!(await store.workspaces()).some((w: { id: string }) => w.id === ws)) throw new BusError(`workspace ${ws} not found`);
+  };
+  const agentExists = async (ws: string, id: string) => {
+    if (!(await store.agent(ws, id))) throw new BusError(`agent ${ws}/${id} not found`);
+  };
+  app.get<{ Params: { ws: string } }>("/api/workspaces/:ws/knowledge", async (req) => {
+    await wsExists(req.params.ws);
+    return { content: await store.data.knowledge(req.params.ws), history: await store.data.history(req.params.ws, null, 20) };
+  });
+  app.put<{ Params: { ws: string } }>("/api/workspaces/:ws/knowledge", async (req) => {
+    await wsExists(req.params.ws);
+    const commit = await store.data.setKnowledge(req.params.ws, z.object({ content: z.string().max(32_000) }).parse(req.body).content);
+    await notifyChange({ kind: "learning", workspace: req.params.ws, agent: "" });
+    return { commit };
+  });
+  app.get<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id/memory", async (req) => {
+    await agentExists(req.params.ws, req.params.id);
+    return { memory: await store.data.memory(req.params.ws, req.params.id), skills: await store.data.skills(req.params.ws, req.params.id) };
+  });
+  const MemoryEdit = z.object({ content: z.string().min(1).max(16_000), reason: z.string().max(300).optional() });
+  app.put<{ Params: { ws: string; id: string; name: string } }>("/api/workspaces/:ws/agents/:id/memory/:name", async (req) => {
+    await agentExists(req.params.ws, req.params.id);
+    const b = MemoryEdit.parse(req.body);
+    return { commit: await learning.editByUser(req.params.ws, req.params.id, { action: "remember", name: req.params.name, content: b.content, reason: b.reason }) };
+  });
+  app.delete<{ Params: { ws: string; id: string; name: string } }>("/api/workspaces/:ws/agents/:id/memory/:name", async (req) => {
+    await agentExists(req.params.ws, req.params.id);
+    return { commit: await learning.editByUser(req.params.ws, req.params.id, { action: "forget", name: req.params.name }) };
+  });
+  app.delete<{ Params: { ws: string; id: string; name: string } }>("/api/workspaces/:ws/agents/:id/skills/:name", async (req) => {
+    await agentExists(req.params.ws, req.params.id);
+    return { commit: await learning.editByUser(req.params.ws, req.params.id, { action: "remove_skill", name: req.params.name }) };
+  });
+  app.get<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id/learning", async (req) => {
+    await agentExists(req.params.ws, req.params.id);
+    return store.data.history(req.params.ws, req.params.id, 200);
+  });
+  app.get<{ Params: { ws: string; commit: string } }>("/api/workspaces/:ws/learning/:commit", async (req) => {
+    await wsExists(req.params.ws);
+    return { diff: await store.data.show(req.params.ws, req.params.commit) };
+  });
+  app.post<{ Params: { ws: string; commit: string } }>("/api/workspaces/:ws/learning/:commit/undo", async (req) => {
+    await wsExists(req.params.ws);
+    const why = z.object({ reason: z.string().max(300).optional() }).parse(req.body ?? {}).reason?.trim() || "Undone by the user in the console";
+    const commit = await store.data.revert(req.params.ws, req.params.commit, why).catch((e: Error) => {
+      throw new BusError(e.message);
+    });
+    await notifyChange({ kind: "learning", workspace: req.params.ws, agent: "" });
+    return { commit };
+  });
+  app.get<{ Params: { ws: string }; Querystring: { state?: string } }>("/api/workspaces/:ws/learning-proposals", async (req) =>
+    learning.proposals(req.params.ws, req.query.state ?? "pending"),
+  );
+  app.post<{ Params: { id: string } }>("/api/learning-proposals/:id/decide", async (req) => {
+    const b = z.object({ decision: z.enum(["approve", "reject"]), comment: z.string().max(1000).optional() }).parse(req.body);
+    return learning.decide(Number(req.params.id), b.decision, b.comment?.trim() || null);
+  });
+  app.post<{ Params: { id: string } }>("/api/threads/:id/reflect", async (req) => {
+    const b = z.object({ agent: z.string().optional() }).parse(req.body ?? {});
+    if (b.agent && !isSlug(b.agent)) throw new BusError("invalid agent");
+    return { agents: await store.reflect(req.params.id, { force: true, agentId: b.agent }) };
+  });
 
   // Schedules: the bus opens a thread for the agent when one is due.
   const schedules = new Schedules(store);
@@ -102,6 +175,7 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
     const b = AgentBody.partial().parse(req.body);
     return store.updateAgent(req.params.ws, req.params.id, {
       name: b.name, role: b.role, defaultModel: b.default_model, acceptsFrom: b.accepts_from, prompt: b.prompt,
+      requireLearningApproval: b.require_learning_approval,
     });
   });
   app.put<{ Params: { ws: string; id: string; provider: string } }>("/api/workspaces/:ws/agents/:id/credentials/:provider", async (req) =>

@@ -8,6 +8,7 @@ import { createProvider, detectProvider, gitAuthHeader, parseRepoUrl, ProviderEr
 import { branchDiff, ensureStaging, MergeConflictError, publishBranch, publishToBase, revParse, squashApproved, stagingPath, syncBase, threadBranch, type UpstreamAuth } from "./git.js";
 import { readAccountToken, readAgentHostToken, readProviderToken, removeAccountToken, removeAgentHostToken, removeProviderToken, writeAccountToken, writeAgentHostToken, writeProviderToken } from "./accounts.js";
 import { rulesFor, suggestRule, type PermissionRules } from "./permissions.js";
+import { AgentData, LIMITS } from "./agent-data.js";
 import { buildPrompt } from "./prompt.js";
 import { route } from "./router.js";
 
@@ -98,6 +99,13 @@ const authorOf = (pub: Publishing) => ({ name: pub.git_author_name || DEFAULT_AU
 const commitMessage = (pub: Publishing, title: string, summary: string) =>
   [title, summary.trim(), pub.ai_trailer ? AI_TRAILER : ""].filter(Boolean).join("\n\n");
 
+/** What an agent is asked when it looks back at a closed thread. */
+export const REFLECTION_PROMPT = `Reflection: this thread is closed. Look back at it and keep only what will matter in future work.
+- A fact about the codebase, the tools or how the user wants things done (especially a correction or a preference from the user): remember it. Update an existing memory instead of adding a near-duplicate.
+- A procedure you had to work out and will need again: save it as a skill (save_skill) with a clear description of when to use it.
+- A memory or skill that turned out wrong or outdated: forget it, or remove_skill.
+Skip anything that only applied to this one task. Do not edit repository files and do not message anyone. If nothing is worth keeping, end the turn without calling any tool.`;
+
 export const AI_TRAILER = "Co-Authored-By: Claude <noreply@anthropic.com>";
 const DEFAULT_AUTHOR = { name: "Forgehall", email: "forgehall@localhost" };
 
@@ -169,6 +177,8 @@ export interface AgentSettings {
   prompt: string;
   permissions: Partial<PermissionRules>;
   credentials: { provider: HostProvider; token_hint: string; created_at: Date }[];
+  /** Learning is automatic unless the user asks this agent to propose changes for approval. */
+  learning: { require_approval: boolean };
 }
 
 /** Consecutive failed runs of one agent on one thread before the thread is blocked. */
@@ -187,7 +197,8 @@ export type Change =
   | { kind: "run_event"; workspace: string; run: number }
   | { kind: "agent"; workspace: string; agent: string }
   | { kind: "permission"; workspace: string; permission: string; thread: string | null }
-  | { kind: "schedule"; workspace: string };
+  | { kind: "schedule"; workspace: string }
+  | { kind: "learning"; workspace: string; agent: string };
 
 export const CHANGES_CHANNEL = "forgehall_changes";
 
@@ -201,6 +212,9 @@ async function cancelQueuedRuns(tx: Tx, threadId: string): Promise<void> {
 }
 
 export class Store {
+  /** Agent memory, skills and workspace knowledge (git, one repository per workspace). */
+  readonly data = new AgentData();
+
   constructor(readonly sql: Sql) {}
 
   // ---------- workspaces & agents ----------
@@ -244,14 +258,14 @@ export class Store {
     return this.agentSettings(a.workspaceId, a.id);
   }
 
-  async updateAgent(workspaceId: string, id: string, p: { name?: string; role?: string; defaultModel?: Model; acceptsFrom?: string[]; prompt?: string }): Promise<AgentSettings> {
+  async updateAgent(workspaceId: string, id: string, p: { name?: string; role?: string; defaultModel?: Model; acceptsFrom?: string[]; prompt?: string; requireLearningApproval?: boolean }): Promise<AgentSettings> {
     const cur = await this.agentSettings(workspaceId, id);
     const name = p.name?.trim() ?? cur.name;
     const role = p.role?.trim() ?? cur.role;
     if (!name || !role) throw new BusError("name and role are required");
     await this.sql`UPDATE agents SET name = ${name}, role = ${role}, default_model = ${p.defaultModel ?? cur.default_model},
         accepts_from = ${p.acceptsFrom ?? cur.accepts_from},
-        config = config || ${this.sql.json({ prompt: p.prompt ?? cur.prompt })}
+        config = config || ${this.sql.json({ prompt: p.prompt ?? cur.prompt, learning: { require_approval: p.requireLearningApproval ?? cur.learning.require_approval } })}
       WHERE workspace_id = ${workspaceId} AND id = ${id}`;
     return this.agentSettings(workspaceId, id);
   }
@@ -264,6 +278,7 @@ export class Store {
     return {
       id: a.id, name: a.name, role: a.role, default_model: a.default_model, accepts_from: a.accepts_from,
       prompt: a.config.prompt ?? "", permissions: a.config.permissions ?? {}, credentials: [...credentials],
+      learning: { require_approval: Boolean((a.config as { learning?: { require_approval?: boolean } }).learning?.require_approval) },
     };
   }
 
@@ -405,6 +420,14 @@ export class Store {
    * queues a run for it. Everything happens in one transaction.
    */
   async postMessage(m: { workspaceId: string; threadId: string; type: MessageType; from: string; to: string; body: string; outcome?: Outcome | null; replyTo?: string | null; options?: string[] | null }): Promise<MessageRow> {
+    let finished = false;
+    const msg = await this.postMessageTx(m, () => (finished = true));
+    // When a thread closes, its agents may look back and keep what they learned.
+    if (finished) void this.reflect(m.threadId).catch((e) => console.error(`[bus] reflection for ${m.threadId}: ${(e as Error).message}`));
+    return msg;
+  }
+
+  private async postMessageTx(m: { workspaceId: string; threadId: string; type: MessageType; from: string; to: string; body: string; outcome?: Outcome | null; replyTo?: string | null; options?: string[] | null }, onDone: () => void): Promise<MessageRow> {
     return this.sql.begin(async (tx) => {
       const [thread] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${m.threadId} FOR UPDATE`;
       if (!thread || thread.workspace_id !== m.workspaceId) throw new BusError(`thread ${m.threadId} does not exist in this workspace`);
@@ -430,6 +453,7 @@ export class Store {
       await tx`UPDATE threads SET state = ${next}, updated_at = now() WHERE id = ${m.threadId}`;
       const closed = next === "done" || next === "cancelled";
       if (closed) await cancelQueuedRuns(tx, m.threadId);
+      if (next === "done" && thread.state !== "done") onDone();
       // Notices ride along with the recipient's next run instead of waking it up.
       if (m.to !== HUMAN && m.type !== "notify" && !closed) {
         // A verification result or the user's reply usually means more work: route it like a request.
@@ -489,7 +513,7 @@ export class Store {
   // ---------- runs ----------
 
   /** Queues a run unless one is already waiting for the same agent and thread. */
-  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType, delaySeconds = 0, substantiveAnswer = false): Promise<void> {
+  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType, delaySeconds = 0, substantiveAnswer = false, reflection = false): Promise<void> {
     const [waiting] = await tx`SELECT id FROM runs WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'queued'`;
     if (waiting) return;
     const [agent] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${thread.workspace_id} AND id = ${agentId}`;
@@ -504,6 +528,7 @@ export class Store {
       failures,
       escalation: thread.flags.escalate?.[agentId] ?? null,
       substantiveAnswer,
+      reflection,
     });
     await tx`INSERT INTO runs (workspace_id, agent_id, thread_id, model, effort, route_reason, priority, not_before)
       VALUES (${thread.workspace_id}, ${agentId}, ${thread.id}, ${r.model}, ${r.effort}, ${r.reason}, ${r.priority},
@@ -553,6 +578,11 @@ export class Store {
       // A new run starts from the escalation it was routed with; clear the flag for the next one.
       await tx`UPDATE threads SET flags = flags #- ${["escalate", agent.id]} WHERE id = ${run.thread_id}`;
       const hostAccess = await this.agentHostAccess(agent.workspace_id, agent.id);
+      const context = {
+        knowledge: await this.data.knowledge(agent.workspace_id),
+        memory: (await this.data.memory(agent.workspace_id, agent.id)).slice(0, LIMITS.memoryFiles),
+        skills: (await this.data.skills(agent.workspace_id, agent.id)).map((sk) => ({ ...sk, files: sk.files.slice(0, LIMITS.skillFiles) })),
+      };
       const team = await tx<{ id: string; name: string; role: string }[]>`SELECT id, name, role FROM agents
         WHERE workspace_id = ${agent.workspace_id} AND id <> ${agent.id} ORDER BY id`;
       return {
@@ -570,6 +600,7 @@ export class Store {
         permissions: rulesFor(mode, agent.config.permissions),
         runnerMode: mode,
         hostAccess,
+        context,
         repo: thread!.repo_id && thread!.branch
           ? { id: thread!.repo_id, base: (await tx<{ base_branch: string }[]>`SELECT base_branch FROM repos WHERE workspace_id = ${agent.workspace_id} AND id = ${thread!.repo_id}`)[0]!.base_branch, branch: thread!.branch }
           : null,
@@ -1288,6 +1319,42 @@ export class Store {
         SELECT 'permission', NULL FROM permission_requests p WHERE p.thread_id = t.id AND p.state = 'pending'
         LIMIT 1
       ) x ON true`;
+  }
+
+  /**
+   * After a thread closes, each agent that worked on it may reflect and keep what it learned. Only
+   * when it is worth it (the user asked for changes or answered a question, a review failed, or the
+   * agent needed several runs), once per agent and thread, unless forced ("Learn from this thread").
+   * The reflection is a notice to the agent plus a run on its default model; the thread stays closed.
+   */
+  async reflect(threadId: string, opts: { force?: boolean; agentId?: string } = {}): Promise<string[]> {
+    return this.sql.begin(async (tx) => {
+      const [t] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${threadId} FOR UPDATE`;
+      if (!t) throw new BusError(`thread ${threadId} not found`);
+      const done = ((t.flags as { reflected?: string[] }).reflected ?? []);
+      const agents = await tx<{ id: string; runs: number; worth: boolean }[]>`
+        SELECT a.id,
+          (SELECT count(*)::int FROM runs r WHERE r.thread_id = ${threadId} AND r.agent_id = a.id AND r.state = 'done') AS runs,
+          (EXISTS (SELECT 1 FROM messages d WHERE d.thread_id = ${threadId} AND d.from_actor = ${HUMAN} AND d.to_actor = a.id AND d.type IN ('decision', 'answer'))
+            OR EXISTS (SELECT 1 FROM messages f WHERE f.thread_id = ${threadId} AND f.to_actor = a.id AND f.type = 'answer' AND f.outcome = 'failed')
+            OR EXISTS (SELECT 1 FROM messages q WHERE q.thread_id = ${threadId} AND q.from_actor = a.id AND q.type = 'ask' AND q.to_actor = ${HUMAN})) AS worth
+        FROM agents a
+        WHERE a.workspace_id = ${t.workspace_id}
+          AND EXISTS (SELECT 1 FROM messages p WHERE p.thread_id = ${threadId} AND p.from_actor = a.id)
+          ${opts.agentId ? tx`AND a.id = ${opts.agentId}` : tx``}`;
+      const chosen = agents.filter((a) => opts.force || (!done.includes(a.id) && (a.worth || a.runs >= 3)));
+      for (const a of chosen) {
+        const [msg] = await tx<{ id: string }[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body)
+          VALUES (${t.workspace_id}, ${threadId}, 'notify', ${SYSTEM}, ${a.id}, ${REFLECTION_PROMPT}) RETURNING id`;
+        await this.enqueue(tx, t, a.id, "notify", 0, false, true);
+        await notify(tx, { kind: "message", workspace: t.workspace_id, thread: threadId, message: msg!.id });
+      }
+      if (chosen.length) {
+        const all = [...new Set([...done, ...chosen.map((a) => a.id)])];
+        await tx`UPDATE threads SET flags = jsonb_set(flags, '{reflected}', ${tx.json(all)}) WHERE id = ${threadId}`;
+      }
+      return chosen.map((a) => a.id);
+    });
   }
 
   /** Every question an agent asked the user in a thread, answered or not, for the console's pins. */

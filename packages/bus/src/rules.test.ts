@@ -11,6 +11,10 @@ describe("route", () => {
     expect(route({ ...base, trigger: "ask" }).model).toBe("haiku");
   });
 
+  it("runs reflections on the agent default model with low priority", () => {
+    expect(route({ ...base, trigger: "notify", reflection: true })).toMatchObject({ model: "sonnet", effort: "medium", priority: 7 });
+  });
+
   it("uses the agent default for answers that continue the work", () => {
     expect(route({ ...base, trigger: "answer", substantiveAnswer: true }).model).toBe("sonnet");
     expect(route({ ...base, trigger: "answer", substantiveAnswer: false }).model).toBe("haiku");

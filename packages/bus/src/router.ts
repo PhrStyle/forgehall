@@ -14,6 +14,8 @@ export interface RouteInput {
    * the user's reply to its question. Usually it now fixes something or asks for approval.
    */
   substantiveAnswer?: boolean;
+  /** A reflection run after the thread closed: what to keep in memory and skills. */
+  reflection?: boolean;
 }
 
 export interface Route {
@@ -43,6 +45,9 @@ export function route(input: RouteInput): Route {
   }
   if (input.failures >= 2) {
     return { model: "opus", effort: "high", reason: `${input.failures} failed runs on this thread`, priority };
+  }
+  if (input.reflection) {
+    return { model: input.agentDefault, effort: "medium", reason: "reflection after the thread closed: agent default model", priority: 7 };
   }
   if (input.trigger === "answer" && input.substantiveAnswer) {
     return { model: input.agentDefault, effort: "medium", reason: "answer that continues the work (verification result or the user's reply): agent default model", priority };
