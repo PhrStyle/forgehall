@@ -17,6 +17,9 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 - **Host access per agent** ([ADR 0009](docs/adr/0009-host-access-per-agent.md)): an agent can have its own GitHub or Azure DevOps token, given to its runs as environment variables. None by default. Set in the agent's Settings, under Host access per agent.
 - API: `POST /api/workspaces`, `POST /api/workspaces/:ws/agents`, `GET /api/workspaces/:ws/agents/:id/settings`, `PATCH /api/workspaces/:ws/agents/:id`, `PUT`/`DELETE /api/workspaces/:ws/agents/:id/credentials/:provider`.
 - Run claim (`POST /runner/claim`) has `hostAccess`: the agent's host tokens, mapped to fixed environment variables for the engine.
+- **Supervisor** (`fh supervise`): runs on the host as your user and keeps agent containers in their desired state. It starts agents that should run (including new ones), stops agents set to `stopped` (they stay stopped across reboots until started again), restarts on request, restarts crashed containers with backoff (10 s up to 5 min), replaces a container after the workspace's Claude account or runner image changed (only when the agent is not in a run) and removes containers of deleted agents. One supervisor runs at a time. `fh supervise --install` and `--uninstall` manage a systemd user service on Linux. `fh agent run` and `fh agent stop` record the desired state.
+- API: `POST /api/workspaces/:ws/agents/:id/start|stop|restart`, `GET /api/supervisor`; agent rows include `desired_state`, `container_state`, `container_detail` and `container_seen_at`. Console: Start, Stop and Restart on the agent page, container state, and a banner when the supervisor is offline.
+- `fh setup` installs the `fh` command as `~/.local/bin/fh` and warns if `~/.local/bin` is not on `PATH`.
 
 ### Fixed
 

@@ -41,6 +41,10 @@ flowchart LR
 
 Start it with the steps in [Getting started](../getting-started.md) and run agents with [Run agents in Docker](../guides/run-agents-in-docker.md).
 
+## The supervisor
+
+Agent containers are started, stopped and restarted by [`fh supervise`](../reference/cli.md#fh-supervise---install--uninstall), a process on your host that runs as your user. It is the only Forgehall component that talks to Docker for agents. The bus stores what you want (start, stop, restart) and the supervisor applies it. The bus does not do this itself, because Docker access is control over the machine and the bus talks to agents all day. A compromised bus can at most ask to start or stop existing agents with the fixed runner image.
+
 ## Two kinds of tokens
 
 | Token | Held by | Opens |

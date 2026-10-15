@@ -35,7 +35,7 @@ Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with 
 | Session resume per agent and thread | Local git for agent data, daily encrypted backup |
 | Real usage read from `rate_limit_event` | Incus VMs, network allowlists |
 | `fh` CLI for workspaces, agents, repositories, threads, runs, usage | |
-| Runner executing the Claude Code CLI, isolated in one Docker container per agent (`fh agent run`) | |
+| Runner executing the Claude Code CLI, isolated in one Docker container per agent, started and stopped from the console by the supervisor (`fh supervise`) | |
 | Bus in the Docker stack; admin token on the console API | |
 | Tool permissions: default rules and permission requests you answer in the console | |
 
@@ -45,16 +45,15 @@ Requires Node 22, pnpm, Docker (rootless is fine) and a Claude Code CLI logged i
 
 ```bash
 pnpm install && pnpm build
-alias fh="node packages/bus/dist/cli.js"
-fh setup                                                    # ~/.forgehall, admin token, infra/docker/.env
+alias fh="node packages/bus/dist/cli.js"                    # for the first fh setup only
+fh setup                                                    # ~/.forgehall, admin token, infra/docker/.env, installs fh
 docker compose -f infra/docker/compose.yaml -p forgehall up -d --build   # Postgres + bus on 127.0.0.1:4545
 docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
 claude setup-token                                          # once; add it in the console: Settings → Claude accounts
 fh workspace add dev "Dev"
 fh agent add dev vigil --name Vigil --role QA --model haiku
 fh agent add dev atlas --name Atlas --role Dev --model haiku
-fh agent run dev vigil                                      # one isolated container per agent
-fh agent run dev atlas
+fh supervise --install                                      # once; starts each agent in its own container
 fh send dev vigil "Ask atlas (ask tool) whether the checkout bug happens without a coupon, then answer me."
 fh thread THR-0001
 pnpm --filter @forgehall/console dev                        # web console on http://localhost:5173

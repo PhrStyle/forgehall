@@ -27,7 +27,7 @@ Status: **implemented**. JSON bodies and responses unless stated. Validation err
 | Endpoint | Returns |
 |---|---|
 | `GET /api/workspaces` | `[{id, name}]` |
-| `GET /api/workspaces/:ws/agents` | Agents with their current run, queued count, last run state, runs in the last day |
+| `GET /api/workspaces/:ws/agents` | Agents with their current run, queued count, last run state, runs in the last day, and their desired and container state (see [Agent containers](#agent-containers-and-the-supervisor)) |
 | `GET /api/workspaces/:ws/threads` | Threads (all columns, including `repo_id` and `branch`) with message count, participants and `waiting_on_you` |
 | `GET /api/workspaces/:ws/runs?limit=50` | Recent runs (max 500) |
 | `GET /api/workspaces/:ws/usage` | Latest usage reading, or `{}` |
@@ -36,6 +36,7 @@ Status: **implemented**. JSON bodies and responses unless stated. Validation err
 | `GET /api/workspaces/:ws/publishing` | The workspace's publishing settings and stored credentials (below) |
 | `GET /api/threads/:id/reviewers?q=<text>` | Possible pull request reviewers for a repository thread (below) |
 | `GET /api/settings` | Machine-wide settings, for example `{"allow_host_runners": false}` |
+| `GET /api/supervisor` | `{online, seen_at}`: `online` is `true` when the supervisor reported in the last 30 seconds |
 | `GET /api/threads/:id` | `{thread, messages, runs}`; 404 if unknown |
 | `GET /api/threads/:id/diff` | A **BranchDiff** for a repository thread (below) |
 | `GET /api/threads/:id/approvals` | The thread's approvals, newest first |
@@ -90,13 +91,35 @@ The console creates and edits workspaces and agents through these endpoints. The
 | `PATCH /api/workspaces/:ws/agents/:id` | Any subset of `{name, role, default_model, accepts_from, prompt}` | Updates the agent. Returns AgentSettings |
 | `PUT /api/workspaces/:ws/agents/:id/credentials/:provider` | `{token}` | Stores the agent's host token. Returns `{provider, token_hint, created_at}` |
 | `DELETE /api/workspaces/:ws/agents/:id/credentials/:provider` | none | Removes the agent's host token. 204 |
+| `POST /api/workspaces/:ws/agents/:id/start` | none | Sets the desired state to `running`. 204. The supervisor starts the container within seconds |
+| `POST /api/workspaces/:ws/agents/:id/stop` | none | Sets the desired state to `stopped`. 204. The supervisor stops the container and leaves it stopped |
+| `POST /api/workspaces/:ws/agents/:id/restart` | none | Asks the supervisor to restart the container. 204 |
 
 - `id` (workspace and agent): lowercase letters, digits and `-`, at most 40 characters, starting with a letter or digit. An agent id cannot be `you` or `system`.
 - `default_model`: `haiku`, `sonnet` or `opus`. `role`, `name` and `prompt` are free text.
 - `accepts_from`: an empty list means any agent may send requests to the agent; otherwise only the listed agents. You can always write to it.
 - `provider` is `github` or `azure-devops`. Whitespace is removed from `token`; a token under 20 characters is refused.
 - AgentSettings: `{id, name, role, default_model, accepts_from, prompt, permissions: {allow?, ask?, deny?}, credentials: [{provider, token_hint, created_at}]}`. Tokens are never returned.
-- Creating an agent does not start it. Start its container on the host with `fh agent run <ws> <id>`; the bus has no Docker access.
+- Creating an agent sets its desired state to `running`, so a running supervisor starts its container. The bus has no Docker access and never starts containers itself; you can also start one with `fh agent run <ws> <id>`.
+
+### Agent containers and the supervisor
+
+Status: **implemented**. The start, stop and restart endpoints only record what you want; [`fh supervise`](cli.md#fh-supervise---install--uninstall) applies it within seconds. Agent rows from `GET /api/workspaces/:ws/agents` include:
+
+| Field | Meaning |
+|---|---|
+| `desired_state` | `running` or `stopped`: what you asked for |
+| `container_state` | Last state the supervisor reported: `running`, `stopped`, `starting`, `stopping`, `restarting`, `updating` or `error` |
+| `container_detail` | Free text with more detail, such as an error message |
+| `container_seen_at` | When the supervisor last reported the agent |
+
+`GET /api/supervisor` shows whether the supervisor is running. The console shows a banner with the `fh supervise --install` command when it is offline.
+
+```bash
+curl -s -X POST http://127.0.0.1:4545/api/workspaces/dev/agents/atlas/restart \
+  -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)"
+# 204
+```
 
 ```bash
 curl -s -X POST http://127.0.0.1:4545/api/workspaces/dev/agents \

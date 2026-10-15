@@ -17,7 +17,7 @@ Runs call the real Claude Code CLI, so **they consume your account's usage limit
 ```bash
 git clone <repository-url> forgehall && cd forgehall
 pnpm install && pnpm build
-alias fh="node packages/bus/dist/cli.js"
+alias fh="node packages/bus/dist/cli.js"   # for the first fh setup only; it installs the fh command
 ```
 
 ## 2. Prepare this machine
@@ -37,6 +37,7 @@ Next:
   docker compose -f infra/docker/compose.yaml -p forgehall up -d --build
   docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
   claude setup-token   # once; save it to ~/.config/forgehall/claude-token (chmod 600)
+  fh supervise --install
 ```
 
 `fh setup` creates `~/.forgehall` with the admin token (mode `0600`) and an `upstreams/` folder, and writes `infra/docker/.env` with the data directory and the user the bus runs as. With rootful Docker it prints your uid and gid instead of `0:0`.
@@ -85,22 +86,19 @@ A workspace is an isolated team. Each agent has a role, a default model and an i
 
 ## 6. Add your Claude account and start the agents
 
-Open the console (`pnpm --filter @forgehall/console dev`, then <http://localhost:5173>), go to **Settings → Claude accounts**, add an account (label, plan, the token from step 4) and select it for the `dev` workspace under **Account per workspace**. Then:
+Open the console (`pnpm --filter @forgehall/console dev`, then <http://localhost:5173>), go to **Settings → Claude accounts**, add an account (label, plan, the token from step 4) and select it for the `dev` workspace under **Account per workspace**. Then install the supervisor once. It starts each agent in its own container:
 
 ```bash
-fh agent run dev vigil
-fh agent run dev atlas
+fh supervise --install
 fh agent ps
 ```
 
 ```
-dev/vigil running isolated (docker, 3f9c2ab81d04). Logs: docker logs -f fh-dev-vigil
-dev/atlas running isolated (docker, 5a7e1c0e91b2). Logs: docker logs -f fh-dev-atlas
 dev/vigil  Up 5 seconds  fh-dev-vigil
 dev/atlas  Up 4 seconds  fh-dev-atlas
 ```
 
-Each agent is one container (`fh-<workspace>-<agent>`) on the `forgehall-agents` network, with its own work volume and a restart policy. `fh agent run` issues a fresh agent token, so running it again also restarts the agent. The runner long-polls the bus for work and works under `/home/agent/work/<thread-id>/` in its container.
+Each agent is one container (`fh-<workspace>-<agent>`) on the `forgehall-agents` network, with its own work volume and a restart policy. The supervisor keeps them running and restarts them after a reboot; see [Run agents in Docker](guides/run-agents-in-docker.md). `fh agent run dev vigil` starts one agent by hand instead, and issues a fresh agent token each time. The runner long-polls the bus for work and works under `/home/agent/work/<thread-id>/` in its container.
 
 ## 7. Send a task
 
@@ -210,16 +208,18 @@ When an agent wants to do something no rule covers, for example `npm install` or
 
 ## If a task stays queued
 
-A run only starts when the agent's runner is connected. The console marks an agent without one **Runner offline**. Start it:
+A run only starts when the agent's runner is connected. The console marks an agent without one **Runner offline**, and shows a banner if the supervisor is not running (start it with `fh supervise --install`). Otherwise start the agent from its page with **Start**, or by hand:
 
 ```bash
 fh agent run dev vigil
 docker logs -f fh-dev-vigil
 ```
 
-Typical causes: the agent was never started, the container exited (see the logs), or the runner image or Claude token is missing (`fh agent run` explains which). A runner that logs a refusal about running directly on this machine is a host runner; start agents with `fh agent run` instead.
+Typical causes: the supervisor is not running, the agent is stopped, the container exited (see the logs), or the runner image or Claude token is missing (`fh agent run` explains which). A runner that logs a refusal about running directly on this machine is a host runner; start agents with the supervisor or `fh agent run` instead.
 
 ## Stop everything
+
+`fh agent stop` also tells the supervisor to leave the agent stopped.
 
 ```bash
 fh agent stop dev vigil

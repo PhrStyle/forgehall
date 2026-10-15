@@ -23,7 +23,7 @@ fh setup
 # Wrote /home/you/forgehall/infra/docker/.env
 ```
 
-It then prints the next steps (compose up, build the runner image, create a Claude token). See [Getting started](../getting-started.md).
+It also installs the `fh` command as `~/.local/bin/fh`, a wrapper that runs this checkout's CLI, and warns if `~/.local/bin` is not on your `PATH`. Then it prints the next steps (compose up, build the runner image, create a Claude token, `fh supervise --install`). See [Getting started](../getting-started.md).
 
 ### `fh migrate`
 
@@ -73,7 +73,7 @@ fh agent token dev atlas
 
 ### `fh agent run <ws> <id> [--isolation docker]`
 
-Starts the agent's runner **isolated**, as the container `fh-<ws>-<id>`. It issues a fresh agent token, removes an existing container of the same name and starts a new one with the `forgehall-agents` network, a work volume (`fh-<ws>-<id>-work`), `--restart unless-stopped`, and the agent token, the Claude token and `BUS_URL=http://bus:4545` as environment variables. `FORGEHALL_BILLING` is passed through if set in your shell.
+Starts the agent's runner **isolated**, as the container `fh-<ws>-<id>`. It issues a fresh agent token, removes an existing container of the same name and starts a new one with the `forgehall-agents` network, a work volume (`fh-<ws>-<id>-work`), `--restart unless-stopped`, and the agent token, the Claude token and `BUS_URL=http://bus:4545` as environment variables. `FORGEHALL_BILLING` is passed through if set in your shell. It also records the agent's desired state as `running`, so a running [supervisor](#fh-supervise---install--uninstall) keeps it up.
 
 Requirements, each with a message telling you what to do when missing: the agent exists, the runner image exists (`forgehall/runner:dev`, or `FORGEHALL_RUNNER_IMAGE`), the stack's network exists, and a Claude token is available (`CLAUDE_CODE_OAUTH_TOKEN`, or the file at `FORGEHALL_CLAUDE_TOKEN_FILE`, default `~/.config/forgehall/claude-token`).
 
@@ -88,7 +88,7 @@ fh agent run dev atlas
 
 ### `fh agent stop <ws> <id>`
 
-Removes the agent's container. The work volume stays.
+Removes the agent's container. The work volume stays. It also records the desired state as `stopped`: a running [supervisor](#fh-supervise---install--uninstall) leaves the agent stopped, across reboots, until it is started again (from the console or with `fh agent run`).
 
 ```bash
 fh agent stop dev atlas
@@ -102,6 +102,34 @@ Lists isolated agents (containers labelled `forgehall.agent`), running or not: `
 ```bash
 fh agent ps
 # dev/atlas  Up 2 minutes  fh-dev-atlas
+```
+
+### `fh supervise [--install|--uninstall]`
+
+Runs the [supervisor](../concepts/isolation-and-permissions.md#the-supervisor) on this host, as your user (not in Docker). It keeps each agent's container in the state you asked for, and it is the only Forgehall process that touches Docker for agents. Status: **implemented**. `--install` and `--uninstall` are for Linux with systemd.
+
+Every 3 seconds it compares each agent's desired state (set from the console, or by `fh agent run` and `fh agent stop`) with its container, and:
+
+- starts agents that should run, including newly created ones;
+- stops agents set to `stopped`; they stay stopped across reboots and supervisor restarts until started again;
+- restarts an agent when you ask for it (Restart in the console);
+- restarts a crashed (exited) container, waiting 10 s, 20 s, 40 s and so on, up to 5 minutes between attempts;
+- replaces a container when the workspace's Claude account or the runner image has changed, only when the agent is not in a run;
+- removes the containers of deleted agents.
+
+It reports each agent's state (`running`, `stopped`, `starting`, `stopping`, `restarting`, `updating` or `error`, with a detail) to the bus, which shows it in the console. Without a Claude account for the workspace it reports an `error` instead of starting the agent. Only one supervisor runs at a time (a Postgres advisory lock).
+
+| Option | Meaning |
+|---|---|
+| (none) | Runs in the foreground, on any platform |
+| `--install` | Writes the systemd user service `~/.config/systemd/user/forgehall-supervisor.service`, enables it and starts it. It passes `PATH`, `DOCKER_HOST`, `DOCKER_CONTEXT`, `DATABASE_URL`, `FORGEHALL_HOME`, `FORGEHALL_BILLING` and `FORGEHALL_RUNNER_IMAGE` from your shell, when they are set |
+| `--uninstall` | Disables and removes the service. Agents keep running |
+
+```bash
+fh supervise --install
+journalctl --user -u forgehall-supervisor -f   # logs
+loginctl enable-linger $USER                   # keep it running when you are logged out
+fh supervise --uninstall
 ```
 
 ### `fh repo add <ws> <id> <upstream> [--base <branch>]`
