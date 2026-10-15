@@ -130,6 +130,17 @@ export class BusError extends Error {}
 const DEFAULT_TOOLS = ["Read", "Glob", "Grep", "Edit", "Write"];
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
+export interface SupervisorTarget {
+  workspace_id: string;
+  id: string;
+  desired_state: "running" | "stopped";
+  restart_requested_at: Date | null;
+  container_state: string | null;
+  claude_account_id: string | null;
+  account_hint: string | null;
+  busy: boolean;
+}
+
 /** An agent as the console edits it. Host tokens are never returned, only their last 4 characters. */
 export interface AgentSettings {
   id: string;
@@ -265,6 +276,52 @@ export class Store {
       if (token) out.push({ provider: r.provider, token });
     }
     return out;
+  }
+
+  // ---------- supervisor: desired agent state ----------
+
+  /** What the user wants for an agent's container; the supervisor on the host makes it so. */
+  async setDesiredState(workspaceId: string, id: string, state: "running" | "stopped"): Promise<void> {
+    const rows = await this.sql`UPDATE agents SET desired_state = ${state} WHERE workspace_id = ${workspaceId} AND id = ${id} RETURNING id`;
+    if (rows.length === 0) throw new BusError(`agent ${workspaceId}/${id} not found`);
+    await notify(this.sql, { kind: "agent", workspace: workspaceId, agent: id });
+  }
+
+  async requestRestart(workspaceId: string, id: string): Promise<void> {
+    const rows = await this.sql`UPDATE agents SET desired_state = 'running', restart_requested_at = now()
+      WHERE workspace_id = ${workspaceId} AND id = ${id} RETURNING id`;
+    if (rows.length === 0) throw new BusError(`agent ${workspaceId}/${id} not found`);
+    await notify(this.sql, { kind: "agent", workspace: workspaceId, agent: id });
+  }
+
+  /** Every agent with what the supervisor needs to decide: desired state, account and whether it is busy. */
+  async supervisorTargets(): Promise<SupervisorTarget[]> {
+    return this.sql<SupervisorTarget[]>`
+      SELECT a.workspace_id, a.id, a.desired_state, a.restart_requested_at, a.container_state,
+        w.claude_account_id, ca.token_hint AS account_hint,
+        EXISTS (SELECT 1 FROM runs r WHERE r.workspace_id = a.workspace_id AND r.agent_id = a.id AND r.state = 'running') AS busy
+      FROM agents a JOIN workspaces w ON w.id = a.workspace_id
+      LEFT JOIN claude_accounts ca ON ca.id = w.claude_account_id
+      ORDER BY a.workspace_id, a.id`;
+  }
+
+  /** The supervisor reports what it sees; the console shows it. */
+  async reportContainers(reports: { workspaceId: string; id: string; state: string; detail: string | null }[]): Promise<void> {
+    for (const r of reports) {
+      const changed = await this.sql`UPDATE agents SET container_state = ${r.state}, container_detail = ${r.detail}, container_seen_at = now()
+        WHERE workspace_id = ${r.workspaceId} AND id = ${r.id}
+          AND (container_state IS DISTINCT FROM ${r.state} OR container_detail IS DISTINCT FROM ${r.detail})
+        RETURNING id`;
+      if (changed.length) await notify(this.sql, { kind: "agent", workspace: r.workspaceId, agent: r.id });
+      else await this.sql`UPDATE agents SET container_seen_at = now() WHERE workspace_id = ${r.workspaceId} AND id = ${r.id}`;
+    }
+    await this.sql`INSERT INTO settings (key, value) VALUES ('supervisor_seen_at', ${this.sql.json(new Date().toISOString())})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
+  }
+
+  async supervisorStatus(): Promise<{ online: boolean; seen_at: string | null }> {
+    const seen = await this.setting<string | null>("supervisor_seen_at", null);
+    return { online: Boolean(seen && Date.now() - Date.parse(seen) < 30_000), seen_at: seen };
   }
 
   /** Issues a new token for an agent (invalidating the previous one) and returns it once. */
@@ -1029,6 +1086,7 @@ export class Store {
   async agentsOverview(workspaceId: string) {
     return this.sql`
       SELECT a.id, a.name, a.role, a.default_model, a.runner_seen_at,
+        a.desired_state, a.container_state, a.container_detail, a.container_seen_at,
         (a.runner_seen_at > now() - interval '60 seconds') AS runner_online,
         cur.id AS run_id, cur.thread_id AS run_thread, cur.model AS run_model, cur.started_at AS run_started_at,
         (SELECT count(*)::int FROM runs q WHERE q.workspace_id = a.workspace_id AND q.agent_id = a.id AND q.state = 'queued') AS queued,

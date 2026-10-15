@@ -43,6 +43,8 @@ export interface StartOptions {
   billing?: string;
   /** Token of the workspace's Claude account, if one is configured. */
   workspaceToken?: string | null;
+  /** What the container was started with (account, image); the supervisor restarts it when this changes. */
+  fingerprint?: string;
 }
 
 /** Starts (or restarts) the agent's isolated runner. */
@@ -71,6 +73,8 @@ export async function startAgent(o: StartOptions): Promise<string> {
     "--restart", "unless-stopped",
     "--label", "forgehall.workspace=" + o.workspace,
     "--label", "forgehall.agent=" + o.agent,
+    "--label", "forgehall.fingerprint=" + (o.fingerprint ?? ""),
+    "--label", "forgehall.started=" + new Date().toISOString(),
     "--volume", `${n}-work:/home/agent/work`,
     ...env.flatMap((e) => ["--env", e]),
     RUNNER_IMAGE,
@@ -93,4 +97,51 @@ export async function listAgents(): Promise<string> {
     "--format", "{{.Label \"forgehall.workspace\"}}/{{.Label \"forgehall.agent\"}}\t{{.Status}}\t{{.Names}}",
   ]);
   return stdout.trim() || "no isolated agents";
+}
+
+export interface AgentContainer {
+  workspace: string;
+  agent: string;
+  name: string;
+  running: boolean;
+  /** Docker's state: running, restarting, exited, created, dead, paused. */
+  state: string;
+  status: string;
+  fingerprint: string;
+  startedAt: Date | null;
+}
+
+/** The agent containers on this machine, as the supervisor needs them. */
+export async function agentContainers(): Promise<AgentContainer[]> {
+  const { stdout } = await exec("docker", [
+    "ps", "-a", "--filter", "label=forgehall.agent", "--no-trunc",
+    "--format", "{{json .}}",
+  ]);
+  return stdout.split("\n").filter(Boolean).map((line) => {
+    const c = JSON.parse(line) as { Names: string; State: string; Status: string; Labels: string };
+    const labels = Object.fromEntries(c.Labels.split(",").map((kv) => {
+      const i = kv.indexOf("=");
+      return [kv.slice(0, i), kv.slice(i + 1)];
+    }));
+    const started = labels["forgehall.started"];
+    return {
+      workspace: labels["forgehall.workspace"] ?? "",
+      agent: labels["forgehall.agent"] ?? "",
+      name: c.Names,
+      running: c.State === "running",
+      state: c.State,
+      status: c.Status,
+      fingerprint: labels["forgehall.fingerprint"] ?? "",
+      startedAt: started ? new Date(started) : null,
+    };
+  });
+}
+
+/** Id of the runner image, so the supervisor can restart agents after it is rebuilt. */
+export async function runnerImageId(): Promise<string | null> {
+  try {
+    return (await exec("docker", ["image", "inspect", "--format", "{{.Id}}", RUNNER_IMAGE])).stdout.trim() || null;
+  } catch {
+    return null;
+  }
 }

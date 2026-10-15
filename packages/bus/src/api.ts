@@ -55,6 +55,14 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
       workspaceId: req.params.ws, id: b.id, name: b.name, role: b.role, defaultModel: b.default_model, acceptsFrom: b.accepts_from, prompt: b.prompt,
     }));
   });
+  // Desired container state; the supervisor on the host (`fh supervise`) applies it.
+  app.post<{ Params: { ws: string; id: string; action: string } }>("/api/workspaces/:ws/agents/:id/:action(^start|stop|restart$)", async (req, reply) => {
+    const { ws, id, action } = req.params;
+    if (action === "restart") await store.requestRestart(ws, id);
+    else await store.setDesiredState(ws, id, action === "start" ? "running" : "stopped");
+    return reply.code(204).send();
+  });
+  app.get("/api/supervisor", async () => store.supervisorStatus());
   app.get<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id/settings", async (req) => store.agentSettings(req.params.ws, req.params.id));
   app.patch<{ Params: { ws: string; id: string } }>("/api/workspaces/:ws/agents/:id", async (req) => {
     const b = AgentBody.partial().parse(req.body);
