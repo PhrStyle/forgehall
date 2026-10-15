@@ -5,7 +5,7 @@ import { useApp } from "../context";
 import { api, HUMAN, type Approval, type ApprovalResult, type Reviewer, type BranchDiff, type Message, type MessageType, type Run } from "../api";
 import { ReviewerPicker } from "../components/ReviewerPicker";
 import { PermissionList } from "../components/PermissionCard";
-import { useAgents, useApprovals, useDiff, usePermissions, useThread } from "../queries";
+import { useAgents, useApprovals, useDiff, usePermissions, useSupervisor, useThread } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
@@ -421,8 +421,10 @@ function RepoApprovalCard({ threadId, title }: { threadId: string; title: string
 /** Queued work for an agent whose runner is not connected will wait forever; say so and how to fix it. */
 function OfflineRunnerBanner({ runs, agents, workspace }: { runs: Run[]; agents: { id: string; name: string; runner_online: boolean | null }[]; workspace: string }) {
   const waiting = [...new Set(runs.filter((r) => r.state === "queued").map((r) => r.agent_id))];
+  const sup = useSupervisor().data?.online === true;
   const offline = waiting.map((id) => agents.find((a) => a.id === id)).filter((a): a is NonNullable<typeof a> => !!a && !a.runner_online);
   if (offline.length === 0) return null;
+  if (sup) return <div className="banner warn" role="status"><span>{offline.map((a) => a.name).join(" and ")} {offline.length > 1 ? "have" : "has"} work queued. Starting… the supervisor starts it in a few seconds.</span></div>;
   return (
     <div className="banner warn" role="status">
       <b>{offline.map((a) => a.name).join(" and ")} {offline.length > 1 ? "have" : "has"} work queued but no runner connected.</b>

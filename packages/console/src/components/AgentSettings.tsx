@@ -6,7 +6,7 @@ import { useAgents, useAgentSettings } from "../queries";
 import { ago } from "../util";
 import { ErrorBox } from "../ui";
 import { AcceptsFrom, IdentityField, ModelSelect } from "./AgentForm";
-import { CopyCommand } from "./CopyCommand";
+import { StartHint } from "./Supervisor";
 import { TokenInput } from "./TokenInput";
 
 const HOSTS: [HostProvider, string, string][] = [
@@ -94,7 +94,7 @@ function HostRow({ ws, agent, provider, label, placeholder, cred }: { ws: string
   );
 }
 
-export function AgentSettings({ agentId, runnerOnline }: { agentId: string; runnerOnline: boolean | null }) {
+export function AgentSettings({ agentId, runnerOnline, desiredStopped }: { agentId: string; runnerOnline: boolean | null; desiredStopped?: boolean }) {
   const app = useApp();
   const ws = app.workspace!;
   const q = useAgentSettings(ws, agentId);
@@ -104,11 +104,10 @@ export function AgentSettings({ agentId, runnerOnline }: { agentId: string; runn
     <div className="main-body">
       <ErrorBox error={q.error} />
       {!s && !q.error && <p className="empty">Loading…</p>}
-      {runnerOnline === false && (
+      {runnerOnline === false && !desiredStopped && (
         <>
           <div className="section-title"><span>Runner</span></div>
-          <p className="muted" style={{ maxWidth: 700, margin: "0 0 8px" }}>This agent's runner is offline. Start it on this machine:</p>
-          <CopyCommand command={`fh agent run ${ws} ${agentId}`} />
+          <StartHint ws={ws} agentId={agentId} />
         </>
       )}
       {s && (

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
+import { SupervisorBanner } from "../components/Supervisor";
 import { ThreadRow } from "../components/ThreadRow";
 import { useAgents, usePermissions, useThreads, useUsage } from "../queries";
 import { Avatar, ErrorBox, ModelChip, StatusChip } from "../ui";
@@ -40,6 +41,7 @@ export function Team() {
             <button className="btn sm ghost" onClick={() => app.setNextSteps(null)}>Dismiss</button>
           </div>
         )}
+        <SupervisorBanner />
         <ErrorBox error={agents.error ?? threads.error} />
         <div className="stats">
           <div className="stat"><div className="k">Agents running</div><div className="v">{running}<span className="faint" style={{ fontSize: 14 }}> / {a.length}</span></div><div className="s">{a.filter((x) => agentStatus(x) === "error").length} with a failed last run</div></div>

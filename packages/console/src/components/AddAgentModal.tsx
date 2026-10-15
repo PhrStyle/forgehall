@@ -7,12 +7,14 @@ import { slugify } from "../util";
 import { ErrorBox } from "../ui";
 import { AcceptsFrom, IdentityField, ModelSelect } from "./AgentForm";
 import { CopyCommand } from "./CopyCommand";
+import { useSupervisor } from "../queries";
 
 export function AddAgentModal() {
   const app = useApp();
   const qc = useQueryClient();
   const ws = app.workspace!;
   const others = useAgents(ws).data ?? [];
+  const sup = useSupervisor().data?.online === true;
   const [name, setName] = useState("");
   const [id, setId] = useState("");
   const [idTouched, setIdTouched] = useState(false);
@@ -41,10 +43,18 @@ export function AddAgentModal() {
     <div className="scrim modal" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       {m.isSuccess ? (
         <div className="modal-box" role="dialog" aria-modal="true" aria-label="Agent added">
-          <h3>{m.data.name} was added</h3>
-          <p style={{ margin: 0 }}>Start it on this machine:</p>
-          <CopyCommand command={`fh agent run ${ws} ${m.data.id}`} />
-          <span className="faint">It shows as offline until its runner starts.</span>
+          {sup ? (
+            <h3>{m.data.name} was added and is starting.</h3>
+          ) : (
+            <>
+              <h3>{m.data.name} was added</h3>
+              <p style={{ margin: 0 }}>The supervisor is not running. Start it once on this machine and it starts your agents:</p>
+              <CopyCommand command="fh supervise --install" />
+              <p className="faint" style={{ margin: 0 }}>Or start just this agent once:</p>
+              <CopyCommand command={`fh agent run ${ws} ${m.data.id}`} />
+              <span className="faint">It shows as offline until its runner starts.</span>
+            </>
+          )}
           <div className="row-end"><button className="btn primary" autoFocus onClick={close}>Done</button></div>
         </div>
       ) : (

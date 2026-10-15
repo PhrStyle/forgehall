@@ -3,6 +3,7 @@ import { api, type Run } from "./api";
 
 export const useWorkspaces = () => useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces, retry: false, refetchInterval: (q) => (q.state.status === "error" ? 5000 : false) });
 export const useAgents = (ws: string | null) => useQuery({ queryKey: ["agents", ws], queryFn: () => api.agents(ws!), enabled: !!ws, placeholderData: keepPreviousData, refetchInterval: 30_000 });
+export const useSupervisor = () => useQuery({ queryKey: ["supervisor"], queryFn: api.supervisor, refetchInterval: 10_000, retry: false });
 export const useThreads = (ws: string | null) => useQuery({ queryKey: ["threads", ws], queryFn: () => api.threads(ws!), enabled: !!ws, placeholderData: keepPreviousData });
 export const useRuns = (ws: string | null) => useQuery({ queryKey: ["runs", ws], queryFn: () => api.runs(ws!, 50), enabled: !!ws, placeholderData: keepPreviousData });
 export const useUsage = (ws: string | null) => useQuery({ queryKey: ["usage", ws], queryFn: () => api.usage(ws!), enabled: !!ws, placeholderData: keepPreviousData, refetchInterval: 60_000 });

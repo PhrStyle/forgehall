@@ -24,7 +24,13 @@ export interface AgentOverview {
   runs_today: number;
   /** A runner for this agent asked for work in the last minute. */
   runner_online: boolean | null;
+  desired_state?: "running" | "stopped";
+  container_state?: ContainerState | null;
+  container_detail?: string | null;
+  container_seen_at?: string | null;
 }
+export type ContainerState = "running" | "stopped" | "starting" | "stopping" | "restarting" | "updating" | "error";
+export interface SupervisorStatus { online: boolean; seen_at: string | null }
 
 export interface ThreadOverview {
   id: string;
@@ -202,6 +208,10 @@ export const api = {
   setWorkspaceAccount: (ws: string, account: string | null) =>
     request<void>(`/api/workspaces/${enc(ws)}/account`, { method: "PUT", body: JSON.stringify({ account }) }),
   agents: (ws: string) => request<AgentOverview[]>(`/api/workspaces/${enc(ws)}/agents`),
+  startAgent: (ws: string, id: string) => request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/start`, { method: "POST" }),
+  stopAgent: (ws: string, id: string) => request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/stop`, { method: "POST" }),
+  restartAgent: (ws: string, id: string) => request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/restart`, { method: "POST" }),
+  supervisor: () => request<SupervisorStatus>("/api/supervisor"),
   threads: (ws: string) => request<ThreadOverview[]>(`/api/workspaces/${enc(ws)}/threads`),
   repos: (ws: string) => request<RepoRow[]>(`/api/workspaces/${enc(ws)}/repos`),
   diff: (id: string) => request<BranchDiff>(`/api/threads/${enc(id)}/diff`),

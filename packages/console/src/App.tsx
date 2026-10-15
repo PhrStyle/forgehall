@@ -98,16 +98,17 @@ function Side() {
       <div className="group-label"><span>Agents</span><span className="gl-r">{list.length || ""}<button className="iconbtn" aria-label="Add agent" title="Add agent" disabled={!app.workspace} onClick={() => app.setAddAgentOpen(true)}><Icon n="plus" size={14} /></button></span></div>
       <ul className="agent-list">
         {list.map((a) => {
-          const st = agentStatus(a);
+          const stopped = a.desired_state === "stopped" && !a.run_id;
+          const st = stopped ? "idle" : agentStatus(a);
           return (
             <li key={a.id}>
               <NavLink to={`/agents/${a.id}`} className={`agent-row ${match?.params.id === a.id ? "active" : ""}`} aria-current={match?.params.id === a.id ? "true" : undefined}>
                 <Avatar id={a.id} name={a.name} status={st} />
                 <div style={{ minWidth: 0 }}>
-                  <div className="nm"><span>{a.name}</span>{pendingBy.has(a.id) && <i className="perm-dot" title="Waiting for your permission" aria-label="Has a pending permission request" />}<span className="role">{a.role}</span></div>
-                  <div className="sub">{a.run_thread ? `Working on ${a.run_thread}` : a.queued ? `${a.queued} queued` : st === "error" ? "Last run failed" : "Idle"}</div>
+                  <div className="nm"><span>{a.name}</span>{a.container_state === "error" && <i className="warn-dot" title={a.container_detail ?? "The container could not start"} aria-label={`Container error: ${a.container_detail ?? "could not start"}`} />}{pendingBy.has(a.id) && <i className="perm-dot" title="Waiting for your permission" aria-label="Has a pending permission request" />}<span className="role">{a.role}</span></div>
+                  <div className={`sub ${a.desired_state === "stopped" && !a.run_id ? "muted" : ""}`}>{a.desired_state === "stopped" && !a.run_id ? "Stopped" : a.run_thread ? `Working on ${a.run_thread}` : a.queued ? `${a.queued} queued` : st === "error" ? "Last run failed" : "Idle"}</div>
                 </div>
-                <StatusChip s={st} />
+                {stopped ? <span className="chip muted-chip">Stopped</span> : <StatusChip s={st} />}
               </NavLink>
             </li>
           );

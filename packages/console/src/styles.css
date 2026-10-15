@@ -500,3 +500,6 @@ table.tbl{width:100%;border-collapse:collapse;max-width:1000px;font-size:12.5px}
 .cb{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--fg)}
 .rules{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-width:900px}
 .rules li{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:6px 10px;font-size:12px;overflow-x:auto;white-space:nowrap}
+.chip.muted-chip{color:var(--faint,var(--muted));background:transparent}
+.warn-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn);margin-left:6px}
+.banner.warn .copycmd{width:100%}
