@@ -5,6 +5,8 @@ import { billingModeFrom, ClaudeCodeEngine } from "./claude-code.js";
 import type { Engine } from "./engine.js";
 import { commitAndPush, prepareCheckout, type RepoCheckout } from "./workspace.js";
 import { hostEnv } from "./host-access.js";
+import { installContext } from "./agent-context.js";
+import { homedir } from "node:os";
 
 export type { Engine, EngineResult, EngineRun } from "./engine.js";
 export { ClaudeCodeEngine, billingModeFrom, type BillingMode } from "./claude-code.js";
@@ -65,6 +67,13 @@ export class Runner {
   }
 
   async execute(claim: RunClaim): Promise<void> {
+    // Memory and skills go into the agent's own home, which only exists isolated. On the host it
+    // would overwrite the user's personal ~/.claude, so it is skipped there.
+    if (this.cfg.mode !== "host") {
+      await installContext(claim.context, homedir()).catch((e) => console.error(`[runner] installing memory and skills: ${(e as Error).message}`));
+    } else if (claim.context.memory.length || claim.context.skills.length || claim.context.knowledge.trim()) {
+      console.warn("[runner] host mode: memory, skills and workspace knowledge are not installed (they would overwrite your own ~/.claude)");
+    }
     let cwd = join(this.cfg.workRoot, claim.threadId);
     let checkout: RepoCheckout | null = null;
     if (claim.repo) {
