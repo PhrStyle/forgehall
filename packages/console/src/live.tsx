@@ -5,7 +5,7 @@ export type LiveStatus = "live" | "reconnecting";
 const Ctx = createContext<LiveStatus>("reconnecting");
 export const useLiveStatus = () => useContext(Ctx);
 
-interface Change { kind: "thread" | "message" | "run" | "run_event" | "agent" | "permission"; workspace: string; thread?: string; message?: number; run?: number; state?: string }
+interface Change { kind: "thread" | "message" | "run" | "run_event" | "agent" | "permission" | "schedule"; workspace: string; thread?: string; message?: number; run?: number; state?: string }
 
 /** One SSE stream per workspace; every change invalidates the queries it can affect. */
 export function LiveProvider({ workspace, children }: { workspace: string | null; children: ReactNode }) {
@@ -46,6 +46,9 @@ export function LiveProvider({ workspace, children }: { workspace: string | null
           inv(["permissions", ws]);
           if (c.thread) inv(["thread", c.thread]);
           break;
+        case "schedule":
+          inv(["schedules", ws]);
+          break;
         case "run_event":
           if (c.run != null) inv(["runEvents", String(c.run)]);
           break;
@@ -55,7 +58,7 @@ export function LiveProvider({ workspace, children }: { workspace: string | null
     const connect = () => {
       es = new EventSource(`/api/events?workspace=${encodeURIComponent(workspace)}`);
       es.onopen = () => { attempt = 0; setStatus("live"); void qc.invalidateQueries(); };
-      for (const k of ["thread", "message", "run", "run_event", "agent", "permission"]) es.addEventListener(k, handle as EventListener);
+      for (const k of ["thread", "message", "run", "run_event", "agent", "permission", "schedule"]) es.addEventListener(k, handle as EventListener);
       es.onerror = () => {
         setStatus("reconnecting");
         es?.close();

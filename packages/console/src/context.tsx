@@ -11,8 +11,8 @@ interface AppState {
   offline: boolean;
   workspacesError: unknown;
   setWorkspace: (id: string) => void;
-  toast: (msg: string) => void;
-  toastMsg: string | null;
+  toast: (msg: ReactNode, ms?: number) => void;
+  toastMsg: ReactNode | null;
   paletteOpen: boolean;
   setPaletteOpen: (v: boolean) => void;
   newTaskOpen: boolean;
@@ -39,7 +39,7 @@ const LS_WS = "forgehall.workspace";
 export function AppProvider({ children }: { children: ReactNode }) {
   const wsq = useWorkspaces();
   const [chosen, setChosen] = useState<string | null>(() => readLS(LS_WS));
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState<ReactNode | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskTo, setNewTaskTo] = useState<string | null>(null);
@@ -52,10 +52,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const workspace = workspaces.find((w) => w.id === chosen)?.id ?? workspaces[0]?.id ?? null;
 
   const setWorkspace = useCallback((id: string) => { setChosen(id); writeLS(LS_WS, id); }, []);
-  const toast = useCallback((m: string) => {
+  const toast = useCallback((m: ReactNode, ms = 2400) => {
     setToastMsg(m);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setToastMsg(null), 2400);
+    timer.current = setTimeout(() => setToastMsg(null), ms);
   }, []);
 
   useEffect(() => {

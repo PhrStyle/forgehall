@@ -31,3 +31,8 @@ export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api
 export const useAccounts = () => useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
 export const usePublishing = (ws: string | null) => useQuery({ queryKey: ["publishing", ws], queryFn: () => api.publishing(ws!), enabled: !!ws });
 export const useAgentSettings = (ws: string | null, id: string | undefined) => useQuery({ queryKey: ["agentSettings", ws, id], queryFn: () => api.agentSettings(ws!, id!), enabled: !!ws && !!id });
+
+// Schedules and their calendars share the ["schedules", ws] prefix, so one invalidation refreshes both.
+export const useSchedules = (ws: string | null) => useQuery({ queryKey: ["schedules", ws], queryFn: () => api.schedules(ws!), enabled: !!ws, placeholderData: keepPreviousData });
+export const useScheduleCalendar = (ws: string | null, from: string, to: string, enabled = true) =>
+  useQuery({ queryKey: ["schedules", ws, "calendar", from, to], queryFn: () => api.scheduleCalendar(ws!, from, to), enabled: !!ws && enabled, placeholderData: keepPreviousData });

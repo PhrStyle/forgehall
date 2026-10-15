@@ -1,4 +1,5 @@
 // Console API client. Row shapes mirror packages/bus/src/store.ts (read models).
+import type { ScheduleRule } from "@forgehall/shared";
 
 export type ThreadState = "open" | "in_progress" | "verifying" | "awaiting_approval" | "external_review" | "done" | "blocked" | "cancelled";
 export type MessageType = "request" | "ask" | "answer" | "verify" | "approval" | "notify" | "decision";
@@ -174,6 +175,44 @@ export interface AgentSettings {
 export interface AgentCreate { id: string; name: string; role: string; default_model: ModelName; accepts_from?: string[]; prompt?: string }
 export type AgentPatch = Partial<Omit<AgentCreate, "id">>;
 
+export type ScheduleStatus = "upcoming" | "running" | "needs_you" | "done" | "failed" | "skipped";
+export interface ScheduleLastRun { at: string; status: ScheduleStatus; reason: string | null; thread_id: string | null }
+export interface Schedule {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  title: string;
+  prompt: string;
+  repo_id: string | null;
+  rule: ScheduleRule;
+  timezone: string;
+  thread_mode: "new" | "same";
+  skip_if_open: boolean;
+  /** 0..1 */
+  skip_usage_above: number | null;
+  enabled: boolean;
+  cron: string | null;
+  description: string;
+  next_run_at: string | null;
+  last_run: ScheduleLastRun | null;
+  created_at: string;
+}
+export interface ScheduleInput {
+  agent: string;
+  title: string;
+  prompt: string;
+  repo: string | null;
+  rule: ScheduleRule;
+  timezone: string;
+  thread_mode: "new" | "same";
+  skip_if_open: boolean;
+  skip_usage_above: number | null;
+}
+export type SchedulePatch = Partial<ScheduleInput> & { enabled?: boolean };
+export interface CalendarOccurrence { schedule_id: string; at: string; status: ScheduleStatus; reason: string | null; thread_id: string | null }
+export interface ScheduleCalendar { occurrences: CalendarOccurrence[]; frequent: string[] }
+export interface SchedulePreview { cron: string | null; description: string; next: string[] }
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -212,6 +251,17 @@ export const api = {
     request<HostCredential>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "PUT", body: JSON.stringify({ token }) }),
   deleteAgentCredential: (ws: string, id: string, provider: HostProvider) =>
     request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "DELETE" }),
+  schedules: (ws: string) => request<Schedule[]>(`/api/workspaces/${enc(ws)}/schedules`),
+  scheduleCalendar: (ws: string, from: string, to: string) =>
+    request<ScheduleCalendar>(`/api/workspaces/${enc(ws)}/schedules/calendar?from=${enc(from)}&to=${enc(to)}`),
+  createSchedule: (ws: string, b: ScheduleInput) =>
+    request<Schedule>(`/api/workspaces/${enc(ws)}/schedules`, { method: "POST", body: JSON.stringify(b) }),
+  patchSchedule: (id: string, b: SchedulePatch) =>
+    request<Schedule>(`/api/schedules/${enc(id)}`, { method: "PATCH", body: JSON.stringify(b) }),
+  deleteSchedule: (id: string) => request<void>(`/api/schedules/${enc(id)}`, { method: "DELETE" }),
+  runSchedule: (id: string) => request<{ thread_id: string }>(`/api/schedules/${enc(id)}/run`, { method: "POST" }),
+  previewSchedule: (b: { rule: ScheduleRule; timezone: string }) =>
+    request<SchedulePreview>("/api/schedules/preview", { method: "POST", body: JSON.stringify(b) }),
   accounts: () => request<Account[]>("/api/accounts"),
   // The token only travels in this request body; it is never returned, logged or cached.
   saveAccount: (b: { id: string; label: string; plan: AccountPlan; token: string }) =>
