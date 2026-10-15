@@ -9,7 +9,8 @@ import { ago, clock, splitQuestion } from "../util";
 export function jumpTo(messageId: string) {
   const el = document.getElementById(`msg-${messageId}`);
   if (!el) return;
-  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  // Instant: a smooth scroll gets cancelled when the clicked button takes focus. The flash shows where it landed.
+  el.scrollIntoView({ block: "center" });
   el.classList.remove("flash");
   void el.offsetWidth; // restart the animation
   el.classList.add("flash");
