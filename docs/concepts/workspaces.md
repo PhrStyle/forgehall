@@ -46,8 +46,8 @@ Git operations (clone, fetch, push a branch) use plain git and work with any hos
 | Adapter | Status | Notes |
 |---|---|---|
 | `local` | **[now]** | The upstream is any git URL or path that `git push` accepts (for example a bare repository on disk). Approving merges and pushes to it. Register with `fh repo add`. |
-| `azure-devops` | **[planned]** F3 | Azure Repos REST API. |
-| `github` | **[planned]** F3 | REST API, fine-grained token. |
+| `azure-devops` | **[now]** | Azure Repos over HTTPS with the workspace's PAT: pull requests (open, update, merge, abandon), reviewer search among the project's teams. Detected from `dev.azure.com` or `*.visualstudio.com` URLs. |
+| `github` | **[now]** | REST API with a fine-grained token: pull requests (open, update, merge, close), reviewer search among collaborators. Detected from `github.com` URLs. |
 | others | on demand | Implement the interface. |
 
 ### Repositories and the staging remote
