@@ -44,7 +44,7 @@ Done:
 - Repositories: `fh repo add`, the `local` provider, a staging remote per repository served over git smart HTTP with a hook that accepts only `fh/*` branches
 - Branch per thread (`fh/<THREAD-ID>`); the runner checks out, commits and pushes, agents never run git; one run per thread at a time
 - Approvals as records pinned to a commit; the `merge` policy: approving merges into the base branch without a working tree, refuses conflicts and a moved branch, publishes upstream and closes the thread
-- Merge policy with real pull requests on GitHub and Azure DevOps (with a workspace host token): approval requests open the pull request, approving merges it on the host, and the thread follows a merge or close made there
+- Merge policy with real pull requests on GitHub and Azure DevOps (with a workspace host token): approval requests open the pull request, approving merges it on the host, and the thread follows a merge or close made there. Validated end to end on Azure DevOps from the console: a request for changes updated the same pull request with a second iteration, and approving completed it on the host
 - Console: branch card, diff viewer, approval card, repository selection in New task
 - Isolated agents by default: runners report a mode and the bus refuses `host` runners unless you allow them; `fh agent run`, `stop` and `ps` manage one container per agent; the bus runs in the Docker stack
 - Admin token on the whole console API (`/api`); `fh setup` prepares `~/.forgehall` and the stack settings
