@@ -9,8 +9,10 @@ import { fileURLToPath } from "node:url";
 import { ensureAdminToken } from "./admin.js";
 import { dockerIsRootless } from "./agent-network.js";
 import { forgehallHome } from "./git.js";
-import { type Isolation, listAgents, startAgent, stopAgent } from "./isolation.js";
+import { type Isolation, listAgents, runnerImageId, startAgent, stopAgent } from "./isolation.js";
 import { Store } from "./store.js";
+import { installFhCommand, installSupervisorService, uninstallSupervisorService } from "./host-install.js";
+import { fingerprintOf, supervise } from "./supervisor.js";
 
 const USAGE = `fh — Forgehall operations
 
@@ -20,8 +22,9 @@ const USAGE = `fh — Forgehall operations
   fh agent add <ws> <id> --name <name> --role <role> [--model sonnet] [--prompt-file agent.md] [--accepts a,b]
   fh agent token <ws> <id>                 generates a new token (invalidates the previous one)
   fh agent run <ws> <id> [--isolation docker]   starts the agent isolated (container now, VM later)
-  fh agent stop <ws> <id>
+  fh agent stop <ws> <id>                  stops it and keeps it stopped (also for the supervisor)
   fh agent ps
+  fh supervise [--install | --uninstall]   keeps agent containers as the console wants them
   fh repo add <ws> <id> <upstream> [--base main]   upstream: local path or git URL
   fh repos <ws>
   fh send <ws> <agent> <text> [--title <title>] [--severity high] [--repo <id>]
@@ -49,6 +52,8 @@ async function main() {
       repo: { type: "string" },
       isolation: { type: "string" },
       base: { type: "string" },
+      install: { type: "boolean" },
+      uninstall: { type: "boolean" },
     },
   });
   const [cmd, sub, ...rest] = positionals;
@@ -88,11 +93,19 @@ async function main() {
               throw new Error(`Workspace ${ws} has no Claude account. In the console, Settings → Account per workspace, pick one for it (${accounts.map((a) => a.label).join(", ")}), then run this again.`);
             }
           }
-          const container = await startAgent({ workspace: ws, agent: id, agentToken: await store.issueAgentToken(ws, id), isolation, billing: process.env.FORGEHALL_BILLING, workspaceToken: account?.token ?? null });
+          // Tell a running supervisor this agent should run, so it does not stop it again.
+          await store.setDesiredState(ws, id, "running");
+          const target = (await store.supervisorTargets()).find((t) => t.workspace_id === ws && t.id === id)!;
+          const container = await startAgent({
+            workspace: ws, agent: id, agentToken: await store.issueAgentToken(ws, id), isolation, billing: process.env.FORGEHALL_BILLING,
+            workspaceToken: account?.token ?? null, fingerprint: fingerprintOf(target, await runnerImageId()),
+          });
           console.log(`${ws}/${id} running isolated (${isolation}, ${container}). Logs: docker logs -f fh-${ws}-${id}`);
           break;
         }
         if (sub === "stop") {
+          // Stopped stays stopped: the supervisor will not start it again, not even after a reboot.
+          await store.setDesiredState(ws, id, "stopped");
           console.log((await stopAgent(ws, id)) ? `${ws}/${id} stopped` : `${ws}/${id} was not running`);
           break;
         }
@@ -110,6 +123,22 @@ async function main() {
         } else if (sub === "token") {
           console.log(await store.issueAgentToken(ws, id));
         } else throw new Error(USAGE);
+        break;
+      }
+      case "supervise": {
+        if (values.uninstall) {
+          await uninstallSupervisorService();
+          console.log("supervisor service removed; agents keep running until stopped");
+          break;
+        }
+        if (values.install) {
+          const unit = await installSupervisorService();
+          console.log(`supervisor installed as a user service (${unit}) and started.
+It starts with your session. Logs: journalctl --user -u forgehall-supervisor -f
+To keep it running when you are logged out: loginctl enable-linger $USER`);
+          break;
+        }
+        await supervise(store);
         break;
       }
       case "setup": {
@@ -241,9 +270,12 @@ async function setup() {
   const gid = rootless ? 0 : process.getgid?.() ?? 1000;
   const envFile = fileURLToPath(new URL("../../../infra/docker/.env", import.meta.url));
   await writeFile(envFile, `# Written by fh setup\nFORGEHALL_HOME_HOST=${home}\nFORGEHALL_UID=${uid}\nFORGEHALL_GID=${gid}\n`);
-  console.log(`Data directory: ${home}\nDocker: ${rootless ? "rootless" : "rootful"} (stack runs as ${uid}:${gid})\nWrote ${envFile}\n
+  const fh = await installFhCommand();
+  console.log(`Data directory: ${home}\nDocker: ${rootless ? "rootless" : "rootful"} (stack runs as ${uid}:${gid})\nWrote ${envFile}
+Installed the fh command: ${fh.path}${fh.onPath ? "" : `\n  ${join(fh.path, "..")} is not on your PATH: add  export PATH="$HOME/.local/bin:$PATH"  to your shell profile`}\n
 Next:
   docker compose -f infra/docker/compose.yaml -p forgehall up -d --build
   docker build -f infra/docker/Dockerfile --target runner -t forgehall/runner:dev .
-  claude setup-token   # once; save it to ~/.config/forgehall/claude-token (chmod 600)`);
+  fh supervise --install   # starts agents from the console and after a reboot
+  claude setup-token       # once; add the token in the console: Settings → Claude accounts`);
 }
