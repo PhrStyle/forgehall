@@ -702,7 +702,13 @@ export class Store {
     let upstreamUrl = stripCredentials(r.upstreamUrl);
     const provider = (r.provider ?? detectProvider(upstreamUrl)) as ProviderKind;
     if (provider !== "local") {
-      const ref = parseRepoUrl(upstreamUrl);
+      let ref;
+      try {
+        ref = parseRepoUrl(upstreamUrl);
+      } catch (e) {
+        if (e instanceof ProviderError) throw new BusError(`${e.message}. Use the repository's clone URL, e.g. https://github.com/acme/checkout-app or https://dev.azure.com/acme/Shop/_git/checkout-app`);
+        throw e;
+      }
       // The bus authenticates with a token over HTTPS; it has no SSH keys.
       if (ref.provider === "github" && /^git@/.test(upstreamUrl)) upstreamUrl = `https://github.com/${ref.owner}/${ref.repo}.git`;
     }
