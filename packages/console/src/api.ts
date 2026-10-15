@@ -170,7 +170,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(path, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
+    // Only requests with a body are JSON: the bus refuses an empty body labelled as JSON.
+    res = await fetch(path, { ...init, headers: { ...(init?.body !== undefined ? { "content-type": "application/json" } : {}), ...init?.headers } });
   } catch {
     throw new ApiError("Cannot reach the bus", 0);
   }
