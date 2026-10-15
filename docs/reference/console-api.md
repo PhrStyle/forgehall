@@ -66,18 +66,24 @@ What the thread branch changes compared with the base branch, since they diverge
 ```json
 {"id": 3, "thread_id": "THR-0001", "policy": "merge", "requested_by": "atlas",
  "summary": "Rounds to the nearest cent", "head_sha": "81d04e7...", "state": "pending",
- "comment": null, "result": null}
+ "comment": null, "result": null, "published": null}
 ```
 
 `state` is `pending`, `approved`, `rejected` or `superseded`. `head_sha` is `null` while the requesting agent's run is still pushing. `result` is set on approval and depends on the policy:
 
 | Policy | `result` |
 |---|---|
-| `merge` | `{"merged": "<sha>"}`: the new commit on the base branch |
+| `merge` | `{"merged": "<sha>"}`: the new commit on the base branch. For a pull request on GitHub or Azure DevOps: `{"merged": "<merge commit>", "pr": {"id", "url", "status": "merged"}}` |
 | `branch_only` | `{"branch": "fh/THR-0001", "commit": "<sha>"}` |
 | `pull_request` | `{"branch": "fh/THR-0001", "commit": "<sha>", "pr": {"id", "url", "status": "open" \| "merged" \| "closed"}, "warnings"?}` |
 
 `warnings` lists non-fatal problems, such as a reviewer that could not be added.
+
+`published` is `{head, commit}` for the squashed commit the bus pushed for that approval, or `null`.
+
+### Pull request on the host
+
+`GET /api/threads/:id` returns `thread` with `pull_request`: `{id, url, branch, status}` for the pull request the bus opened for the thread (`merge` policy on GitHub or Azure DevOps), or `null`. `status` is `open`, `merged` or `closed`, and the bus refreshes it every `PR_POLL_SECONDS`. See [work on a repository](../guides/work-on-a-repository.md#on-github-or-azure-devops).
 
 ### Questions
 
@@ -173,7 +179,7 @@ curl -s -X POST http://127.0.0.1:4545/api/approvals/3/decide \
 ```
 
 - `approve`: the bus squashes the approved commit onto the **current** base branch, without a working tree, into **one** commit. It is authored and committed by the workspace identity ([Publishing](#publishing)), with the message: the title, a blank line, the approval summary, and the `Co-Authored-By` trailer if `ai_trailer` is on. The approval becomes `approved` and the result depends on the policy (see the table above). Fails if the approval is not `pending`, if the agent is still pushing (`head_sha` is `null`), if the branch moved after the request, or if the squash conflicts with the base. Nothing is published on failure.
-  - `merge`: the commit is pushed as the base branch upstream. The thread closes with `Approved and merged into main as <sha>`.
+  - `merge`: on a local repository, the commit is pushed as the base branch upstream and the thread closes with `Approved and merged into main as <sha>`. On GitHub or Azure DevOps with a host credential for the workspace, the approval request has already opened a pull request (the bus pushed the commit to `fh/<THREAD-ID>`, with no reviewers). Approving merges that pull request on the host, keeping the commit as is (on GitHub, squashed if rebase merging is disabled in the repository); Azure DevOps completion is waited for, and the source branch is deleted. The thread closes with `Approved and merged pull request N (url) into main as <sha>`. Conflicts, a branch that moved since the approved commit, or a branch policy on the host (required reviewers, builds) are refused with the reason.
   - `branch_only`: the commit is force-pushed as the thread branch (`fh/<THREAD-ID>`) upstream. The thread closes.
   - `pull_request`: the branch is pushed and a pull request is opened against the base branch with the chosen `reviewers` and `title` (default: the thread title). The thread moves to `external_review`. Every `PR_POLL_SECONDS` the bus checks the pull request: if it is merged, the thread closes; if it is closed without merging, the thread becomes `blocked` and you are told. Reviewer comments are **not** yet sent back to the agent (planned).
 - `reject`: `comment` is required. The approval becomes `rejected` and the assignee receives `Changes requested: <comment>` as a `decision`, which starts a new run.

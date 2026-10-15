@@ -2,7 +2,7 @@
 
 You will register a sample git repository with a bug, ask an agent to fix it on its own branch, review the diff in the console, approve it, and see the fix land in the repository.
 
-Status: **implemented (phase 2)**, `local` provider and `merge` approval policy only. Pull requests on GitHub or Azure DevOps are planned.
+Status: **implemented (phase 2)** for the `local` provider with the `merge` approval policy, and for GitHub and Azure DevOps with `merge` when the workspace has a host credential (see [On GitHub or Azure DevOps](#on-github-or-azure-devops)). Reviewer comments sent back to the agent are planned.
 
 Prerequisites: the setup from [Getting started](../getting-started.md) (stack running, `atlas` started with `fh agent run dev atlas`, console) and `git` installed. Agents use file tools and the allowed test and build commands; they do not run git.
 
@@ -70,7 +70,7 @@ You can also inspect the branch in git: `git -C ~/.forgehall/staging/dev/checkou
 
 When atlas calls `request_approval`, the thread moves to `awaiting_approval` and an **approval card** appears, pinned to the exact commit atlas pushed. Review the diff, then choose:
 
-- **Approve and merge**: the bus merges that commit into `main` and pushes it to your upstream. The thread closes with the message `Approved and merged into main as <sha>`.
+- **Approve and merge**: on a local repository, the bus merges that commit into `main` and pushes it to your upstream. The thread closes with the message `Approved and merged into main as <sha>`. On GitHub or Azure DevOps the bus merges the pull request instead; see below.
 - **Request changes**: write what should change (required). It goes to atlas as `Changes requested: ...` and starts a new run on the same branch.
 
 ## 6. Check the upstream
@@ -85,6 +85,18 @@ git -C ~/.forgehall/upstreams/checkout-app.git log --oneline --graph main
 ```
 
 The merge commit is authored by `Forgehall <forgehall@localhost>`; atlas's commit keeps its own author.
+
+## On GitHub or Azure DevOps
+
+With a repository on GitHub or Azure DevOps and a host token for it in **Settings → Publishing**, `merge` uses a real pull request instead of pushing to the base branch. Token scopes are in the [console API reference](../reference/console-api.md#publishing).
+
+1. **Approval requested.** The bus squashes the pinned commit as usual, pushes it to `fh/THR-0001` on the host and opens a pull request: title = thread title, description = the approval summary and `Thread THR-0001. Opened by Forgehall: approve it in the console to merge.`, with no reviewers. A notice in the thread links to it. If a pull request is already open for the thread (after a request for changes), the bus updates it with the new commit, title and description instead of opening another.
+2. **Changes requested.** The pull request stays open while you ask for more changes. Comments on it are not sent to the agent yet (planned).
+3. **Approve and merge.** The bus merges the pull request on the host only if its branch is still at the approved commit. The commit is kept as it is (rebase; on GitHub, squashed if rebase merging is disabled in the repository), Azure DevOps completion is waited for, and the source branch is deleted. Conflicts, branch policies (required reviewers, builds) or a moved branch are refused with an explanation. The thread closes with `Approved and merged pull request N (url) into main as <sha>`.
+4. **Merged or closed on the host.** If someone merges the pull request on the host, the bus notices within `PR_POLL_SECONDS` and closes the thread. If it is closed (GitHub) or abandoned (Azure DevOps) without merging, pending approvals are withdrawn and the thread is `blocked` with a notice.
+5. **Cancel.** Cancelling the thread in the console closes (GitHub) or abandons (Azure DevOps) its open pull request.
+
+Local repositories, and workspaces without a token for the host, keep the behaviour above for `local`: the squashed commit is pushed directly to the base branch.
 
 ## What if
 

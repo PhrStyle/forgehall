@@ -8,6 +8,7 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 
 ### Added
 
+- **Pull request operations in providers.** `@forgehall/providers` can update, merge and close pull requests on GitHub and Azure DevOps. API: `GET /api/threads/:id` returns `pull_request`, approvals have `published`, and a host merge's `result` has `pr`.
 - **Questions to you with options, and Waiting on you.** `ask` to `you` takes `options` (2 to 6 short choices), shown as buttons in the console. Threads and agents show a **Waiting on you** badge while a question, approval or permission request waits on you, and threads waiting on you come first. API: messages have `options`; `GET /api/threads/:id` returns `questions`; thread rows have `waiting_on_you`, `waiting_reason` and `waiting_message_id`; agent rows have `waiting_thread`.
 - **Publishing policies.** `pull_request`: approving pushes the thread branch and opens a pull request on GitHub or Azure DevOps with the reviewers you pick on the approval card; the thread waits in `external_review` until the bus sees it merged (closes) or closed (blocked). `branch_only`: approving pushes the branch. Policy per workspace in Settings → Publishing.
 - **Commit identity per workspace** and an optional `Co-Authored-By: Claude` trailer, applied to published commits.
@@ -65,6 +66,7 @@ Phase 1 (bus, runner, CLI) and phase 2 so far (repositories, approvals, isolatio
 
 ### Changed
 
+- **Merge policy opens real pull requests on GitHub and Azure DevOps.** With a host token for the workspace, `merge` pushes the approved commit to `fh/<THREAD-ID>` and opens a pull request when approval is requested; approving merges it on the host, and the thread closes when it is merged or closed there. Local repositories and workspaces without a token still push the commit to the base branch.
 - **Answers that continue the work use the agent's default model.** A verification result (an answer to a `verify`) and the user's reply to an agent now run on the agent's default model instead of Haiku. Other answers still route to Haiku.
 - **Subscription-only billing is the default** with a subscription token: the runner ignores API keys and stops a run on paid extra usage without any setting. `FORGEHALL_BILLING` (now `auto` by default) only forces `any` or `subscription-only`.
 - Approving now publishes **one squashed commit** per approval, authored by the workspace identity, for every policy (it was a merge commit by "Forgehall" that kept the agents' commits). The agents' per-run commits stay in the staging remote.

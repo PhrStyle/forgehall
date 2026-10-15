@@ -84,15 +84,15 @@ Each workspace chooses what "approved" means, in **Settings → Publishing** (de
 
 | Policy | Typical for | When you approve |
 |---|---|---|
-| `merge` | personal | The commit becomes the base branch upstream. The thread closes. |
+| `merge` | personal | Local repositories: the commit becomes the base branch upstream and the thread closes. GitHub or Azure DevOps with a host credential: the pull request the bus opened for the thread is merged on the host, and the thread closes. |
 | `pull_request` | work | You set the title and **choose the reviewers**. The bus pushes the branch `fh/<THREAD-ID>`, opens the pull request on GitHub or Azure DevOps and the thread waits in `external_review`. The real approval is the reviewer's on the host: when the bus sees the pull request merged, the thread closes; closed without merging, the thread is `blocked` and you decide. |
 | `branch_only` | repositories without pull requests | The bus pushes the branch `fh/<THREAD-ID>`. The thread closes; the rest is manual. |
 
 Reviewers are chosen at approval time (rather than fixed in config) because who should review depends on the change.
 
-**[now]** `merge` and `branch_only` with any repository; `pull_request` with GitHub and Azure DevOps repositories, using the workspace's write credential (**Settings → Publishing → Host credentials**: GitHub fine-grained token with *Contents* and *Pull requests* read/write; Azure DevOps PAT with *Code (Read & Write)* and *Identity (Read)*). Only the bus holds that credential; agents never get it. The host clients are tested against recorded API behaviour; a full run against a real GitHub or Azure DevOps project is still to be done.
+**[now]** `merge` with any repository; with GitHub and Azure DevOps repositories and a host credential, `merge` opens a real pull request when approval is requested and merges it on approval (see [work on a repository](../guides/work-on-a-repository.md#on-github-or-azure-devops)). `branch_only` with any repository; `pull_request` with GitHub and Azure DevOps repositories, using the workspace's write credential (**Settings → Publishing → Host credentials**: GitHub fine-grained token with *Contents* and *Pull requests* read/write; Azure DevOps PAT with *Code (Read & Write)* and *Identity (Read)*). Only the bus holds that credential; agents never get it. The host clients are tested against recorded API behaviour; a full run against a real GitHub or Azure DevOps project is still to be done.
 
-**[planned]** Reviewer comments sent back to the responsible agent as `decision` messages; opening the pull request earlier (when verification starts) so CI runs before you approve; a read-only credential for agents to fetch from real providers.
+**[planned]** Reviewer comments sent back to the responsible agent as `decision` messages; opening the pull request earlier (when verification starts, instead of when approval is requested) so CI runs before you approve; a read-only credential for agents to fetch from real providers.
 
 ## Billing
 

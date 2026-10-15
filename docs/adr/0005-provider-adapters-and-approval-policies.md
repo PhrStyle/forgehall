@@ -1,6 +1,6 @@
 # 0005. Provider adapters and approval policies
 
-- Status: Accepted (implemented in phase 2: policies, adapters for GitHub and Azure DevOps, squash publishing; reviewer comments and early pull requests still planned)
+- Status: Accepted (implemented in phase 2: policies, adapters for GitHub and Azure DevOps, squash publishing; `merge` opens a real pull request when approval is requested and merges it on approval; reviewer comments back to the agent still planned)
 - Date: 2026-10-13
 
 ## Context

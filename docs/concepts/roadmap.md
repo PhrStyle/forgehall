@@ -44,6 +44,7 @@ Done:
 - Repositories: `fh repo add`, the `local` provider, a staging remote per repository served over git smart HTTP with a hook that accepts only `fh/*` branches
 - Branch per thread (`fh/<THREAD-ID>`); the runner checks out, commits and pushes, agents never run git; one run per thread at a time
 - Approvals as records pinned to a commit; the `merge` policy: approving merges into the base branch without a working tree, refuses conflicts and a moved branch, publishes upstream and closes the thread
+- Merge policy with real pull requests on GitHub and Azure DevOps (with a workspace host token): approval requests open the pull request, approving merges it on the host, and the thread follows a merge or close made there
 - Console: branch card, diff viewer, approval card, repository selection in New task
 - Isolated agents by default: runners report a mode and the bus refuses `host` runners unless you allow them; `fh agent run`, `stop` and `ps` manage one container per agent; the bus runs in the Docker stack
 - Admin token on the whole console API (`/api`); `fh setup` prepares `~/.forgehall` and the stack settings
@@ -60,7 +61,7 @@ Done:
 Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
-- A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts (F3)
+- A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts instead of when approval is requested (F3)
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
 - Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2
