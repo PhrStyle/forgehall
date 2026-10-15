@@ -64,4 +64,5 @@ Remaining:
 - A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts instead of when approval is requested (F3)
 - [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
+- Console form feedback: submitting New task (and other forms) with a required field empty does nothing visible today. Mark required fields, show an inline message on the empty field ("Add a short summary"), focus it, and keep the button's state clear, so a refused submit never looks like a broken button
 - Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2
