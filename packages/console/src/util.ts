@@ -107,3 +107,5 @@ export function compactInput(input: unknown, max = 160): string {
 
 /** Runs are paid by plan limits; the dollar figure is only what the same tokens would cost on the API. */
 export const MONEY_HINT = "Claude Code's estimate at API prices. With a subscription login this is not charged; usage counts against your plan limits.";
+
+export const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);

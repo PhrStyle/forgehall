@@ -144,6 +144,19 @@ export interface PermissionRow {
 }
 export interface Settings { allow_host_runners: boolean; [k: string]: unknown }
 
+export interface AgentSettings {
+  id: string;
+  name: string;
+  role: string;
+  default_model: ModelName;
+  accepts_from: string[];
+  prompt: string;
+  permissions: { allow?: string[]; ask?: string[]; deny?: string[] };
+  credentials: HostCredential[];
+}
+export interface AgentCreate { id: string; name: string; role: string; default_model: ModelName; accepts_from?: string[]; prompt?: string }
+export type AgentPatch = Partial<Omit<AgentCreate, "id">>;
+
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
@@ -169,6 +182,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const enc = encodeURIComponent;
 export const api = {
   workspaces: () => request<Workspace[]>("/api/workspaces"),
+  createWorkspace: (b: { id: string; name: string }) =>
+    request<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify(b) }),
+  createAgent: (ws: string, b: AgentCreate) =>
+    request<AgentSettings>(`/api/workspaces/${enc(ws)}/agents`, { method: "POST", body: JSON.stringify(b) }),
+  agentSettings: (ws: string, id: string) => request<AgentSettings>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/settings`),
+  patchAgent: (ws: string, id: string, b: AgentPatch) =>
+    request<AgentSettings>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}`, { method: "PATCH", body: JSON.stringify(b) }),
+  // Per-agent host token: only travels in the request body, never returned.
+  saveAgentCredential: (ws: string, id: string, provider: HostProvider, token: string) =>
+    request<HostCredential>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "PUT", body: JSON.stringify({ token }) }),
+  deleteAgentCredential: (ws: string, id: string, provider: HostProvider) =>
+    request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "DELETE" }),
   accounts: () => request<Account[]>("/api/accounts"),
   // The token only travels in this request body; it is never returned, logged or cached.
   saveAccount: (b: { id: string; label: string; plan: AccountPlan; token: string }) =>

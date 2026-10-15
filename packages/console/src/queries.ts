@@ -29,3 +29,4 @@ export const usePermissions = (ws: string | null) => useQuery({ queryKey: ["perm
 export const useSettings = () => useQuery({ queryKey: ["settings"], queryFn: api.settings });
 export const useAccounts = () => useQuery({ queryKey: ["accounts"], queryFn: api.accounts });
 export const usePublishing = (ws: string | null) => useQuery({ queryKey: ["publishing", ws], queryFn: () => api.publishing(ws!), enabled: !!ws });
+export const useAgentSettings = (ws: string | null, id: string | undefined) => useQuery({ queryKey: ["agentSettings", ws, id], queryFn: () => api.agentSettings(ws!, id!), enabled: !!ws && !!id });

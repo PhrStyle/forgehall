@@ -5,6 +5,8 @@ import { useAgents, usePermissions, useThreads } from "./queries";
 import { Avatar, Icon, StatusChip } from "./ui";
 import { agentStatus } from "./util";
 import { ContextPanel } from "./components/ContextPanel";
+import { AddAgentModal } from "./components/AddAgentModal";
+import { NewWorkspaceModal } from "./components/NewWorkspaceModal";
 import { NewTaskModal } from "./components/NewTaskModal";
 import { Palette } from "./components/Palette";
 import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
@@ -70,6 +72,8 @@ function Shell() {
 
       <ContextPanel />
       {app.paletteOpen && <Palette />}
+      {app.newWorkspaceOpen && <NewWorkspaceModal />}
+      {app.addAgentOpen && app.workspace && <AddAgentModal />}
       {app.newTaskOpen && <NewTaskModal />}
       {app.toastMsg && <div className="toast" role="status">{app.toastMsg}</div>}
     </div>
@@ -91,7 +95,7 @@ function Side() {
       <button className="search" onClick={() => app.setPaletteOpen(true)}>
         <Icon n="search" size={14} /><span>Search or run…</span><kbd>Ctrl K</kbd>
       </button>
-      <div className="group-label"><span>Agents</span><span>{list.length || ""}</span></div>
+      <div className="group-label"><span>Agents</span><span className="gl-r">{list.length || ""}<button className="iconbtn" aria-label="Add agent" title="Add agent" disabled={!app.workspace} onClick={() => app.setAddAgentOpen(true)}><Icon n="plus" size={14} /></button></span></div>
       <ul className="agent-list">
         {list.map((a) => {
           const st = agentStatus(a);
@@ -108,7 +112,7 @@ function Side() {
             </li>
           );
         })}
-        {app.workspace && agents.isSuccess && list.length === 0 && <li className="empty" style={{ padding: "8px 12px" }}>No agents. Run <span className="mono">fh agent add {app.workspace} …</span></li>}
+        {app.workspace && agents.isSuccess && list.length === 0 && <li className="empty" style={{ padding: "8px 12px" }}>No agents yet. <button className="btn sm" onClick={() => app.setAddAgentOpen(true)}>Add agent</button></li>}
       </ul>
       <div className="side-foot">
         <button className="btn primary grow" disabled={!app.workspace} onClick={() => app.openNewTask()}>New task</button>

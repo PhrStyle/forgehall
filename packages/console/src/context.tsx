@@ -19,6 +19,13 @@ interface AppState {
   newTaskTo: string | null;
   openNewTask: (to?: string) => void;
   closeNewTask: () => void;
+  newWorkspaceOpen: boolean;
+  setNewWorkspaceOpen: (v: boolean) => void;
+  addAgentOpen: boolean;
+  setAddAgentOpen: (v: boolean) => void;
+  /** Set after creating a workspace; the Team page shows next steps until dismissed. */
+  nextSteps: string | null;
+  setNextSteps: (ws: string | null) => void;
 }
 const Ctx = createContext<AppState | null>(null);
 export const useApp = () => {
@@ -36,6 +43,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [newTaskTo, setNewTaskTo] = useState<string | null>(null);
+  const [newWorkspaceOpen, setNewWorkspaceOpen] = useState(false);
+  const [addAgentOpen, setAddAgentOpen] = useState(false);
+  const [nextSteps, setNextSteps] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
   const workspaces = wsq.data ?? [];
@@ -64,7 +74,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     newTaskOpen, newTaskTo,
     openNewTask: (to) => { setNewTaskTo(to ?? null); setNewTaskOpen(true); setPaletteOpen(false); },
     closeNewTask: () => setNewTaskOpen(false),
-  }), [workspace, workspaces, wsq.isSuccess, wsq.error, setWorkspace, toast, toastMsg, paletteOpen, newTaskOpen, newTaskTo]);
+    newWorkspaceOpen, setNewWorkspaceOpen, addAgentOpen, setAddAgentOpen, nextSteps, setNextSteps,
+  }), [newWorkspaceOpen, addAgentOpen, nextSteps, workspace, workspaces, wsq.isSuccess, wsq.error, setWorkspace, toast, toastMsg, paletteOpen, newTaskOpen, newTaskTo]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

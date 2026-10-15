@@ -4,13 +4,14 @@ import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
 import { EventView, RunHeader } from "../components/RunFeed";
 import { SamplePanels, type SampleTab } from "../components/Samples";
+import { AgentSettings } from "../components/AgentSettings";
 import { PermissionList } from "../components/PermissionCard";
 import { useAgents, usePermissions, useRuns, useRunsEvents } from "../queries";
 import { Avatar, Chip, ErrorBox, ModelChip, StatusChip } from "../ui";
 import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
-type Tab = "activity" | "runs" | SampleTab;
-const TABS: [Tab, string][] = [["activity", "Activity"], ["runs", "Runs"], ["memory", "Memory"], ["skills", "Skills"], ["environment", "Environment"], ["versions", "Versions"]];
+type Tab = "activity" | "runs" | "settings" | SampleTab;
+const TABS: [Tab, string][] = [["activity", "Activity"], ["runs", "Runs"], ["memory", "Memory"], ["skills", "Skills"], ["environment", "Environment"], ["versions", "Versions"], ["settings", "Settings"]];
 
 export function AgentPage() {
   const { id } = useParams();
@@ -38,7 +39,7 @@ export function AgentPage() {
           {TABS.map(([k, l]) => <button key={k} className="tab" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}</button>)}
         </div>
       </div>
-      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : <div className="main-body"><SamplePanels tab={tab} agentId={a.id} /></div>}
+      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : tab === "settings" ? <AgentSettings agentId={a.id} runnerOnline={a.runner_online} /> : <div className="main-body"><SamplePanels tab={tab} agentId={a.id} /></div>}
     </>
   );
 }

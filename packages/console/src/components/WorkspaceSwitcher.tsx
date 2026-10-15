@@ -15,7 +15,7 @@ export function WorkspaceSwitcher() {
   const cur = app.workspaces.find((w) => w.id === app.workspace);
   return (
     <div className="wsw" ref={ref}>
-      <button className="wsbtn" aria-haspopup="listbox" aria-expanded={open} title="Switch workspace" onClick={() => setOpen((v) => !v)} disabled={app.workspaces.length === 0}>
+      <button className="wsbtn" aria-haspopup="listbox" aria-expanded={open} title="Switch workspace" onClick={() => setOpen((v) => !v)} disabled={app.workspaces.length === 0 && app.offline}>
         <span className="wsn"><span className="faint">Workspace</span><b>{cur ? cur.name : app.offline ? "offline" : "none"}</b></span>
         <Icon n="chevron" />
       </button>
@@ -28,6 +28,9 @@ export function WorkspaceSwitcher() {
               </button>
             </li>
           ))}
+          <li>
+            <button className="wsopt wsnew" onClick={() => { setOpen(false); app.setNewWorkspaceOpen(true); }}>+ New workspace</button>
+          </li>
         </ul>
       )}
     </div>

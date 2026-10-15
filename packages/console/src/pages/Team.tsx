@@ -34,6 +34,12 @@ export function Team() {
         <div />
       </div>
       <div className="main-body">
+        {app.nextSteps === ws && (
+          <div className="notice" role="status" style={{ marginBottom: 12 }}>
+            <span>Next: add agents, pick a Claude account in <Link to="/settings">Settings</Link>, and choose how approvals publish.</span>
+            <button className="btn sm ghost" onClick={() => app.setNextSteps(null)}>Dismiss</button>
+          </div>
+        )}
         <ErrorBox error={agents.error ?? threads.error} />
         <div className="stats">
           <div className="stat"><div className="k">Agents running</div><div className="v">{running}<span className="faint" style={{ fontSize: 14 }}> / {a.length}</span></div><div className="s">{a.filter((x) => agentStatus(x) === "error").length} with a failed last run</div></div>
@@ -46,8 +52,8 @@ export function Team() {
         {agents.isSuccess && a.length === 0 ? (
           <div className="empty-state">
             <h3>No agents in this workspace</h3>
-            <p>Add the first agents with the CLI:</p>
-            <div className="term"><span className="p">$</span> fh agent add {ws} vigil --name Vigil --role QA --model haiku<br /><span className="p">$</span> fh agent add {ws} atlas --name Atlas --role Dev --model haiku</div>
+            <p>Add your first agent, then start it on this machine.</p>
+            <button className="btn primary" onClick={() => app.setAddAgentOpen(true)}>Add agent</button>
           </div>
         ) : (
           <div className="grid">

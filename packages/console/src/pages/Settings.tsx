@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Account, type AccountPlan, type ApprovalPolicy, type HostCredential, type HostProvider } from "../api";
 import { useApp } from "../context";
 import { useAccounts, usePublishing, useSettings } from "../queries";
-import { ago } from "../util";
+import { ago, slugify } from "../util";
+import { TokenInput } from "../components/TokenInput";
 import { Chip, ErrorBox, Icon, ModelChip, PreviewBadge } from "../ui";
 
 const RULES: [string, string, "haiku" | "sonnet" | "opus" | "agent", string][] = [
@@ -44,19 +45,7 @@ const PLANS: [AccountPlan, string][] = [
   ["team-standard", "Team Standard"], ["team-premium", "Team Premium"], ["enterprise", "Enterprise"],
 ];
 const planLabel = (p: string) => PLANS.find(([k]) => k === p)?.[1] ?? p;
-const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
-
-function TokenInput({ value, onChange, label, autoFocus, placeholder = "sk-ant-oat01-…" }: { value: string; onChange: (v: string) => void; label: string; autoFocus?: boolean; placeholder?: string }) {
-  const [shown, setShown] = useState(false);
-  return (
-    <div style={{ display: "flex", gap: 6 }}>
-      <input className="input" style={{ flex: 1 }} type={shown ? "text" : "password"} autoComplete="off" spellCheck={false} autoCapitalize="off" autoFocus={autoFocus}
-        aria-label={label} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
-      <button type="button" className="btn sm" aria-pressed={shown} onClick={() => setShown(!shown)}>{shown ? "Hide" : "Show"}</button>
-    </div>
-  );
-}
 
 function AccountRowView({ a, onChanged }: { a: Account; onChanged: () => void }) {
   const [mode, setMode] = useState<"none" | "replace" | "remove">("none");
