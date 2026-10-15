@@ -1,20 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Account, type AccountPlan, type ApprovalPolicy, type HostCredential, type HostProvider } from "../api";
 import { useApp } from "../context";
-import { useAccounts, usePublishing, useRepos, useSettings } from "../queries";
+import { useAccounts, usePublishing, useRepos, useSettings, useSupervisor } from "../queries";
 import { ago, slugify } from "../util";
 import { TokenInput } from "../components/TokenInput";
 import { AddRepoModal, HOST_LABEL } from "../components/AddRepoModal";
-import { Chip, ErrorBox, Icon, ModelChip, PreviewBadge } from "../ui";
+import { Chip, ErrorBox, Icon, ModelChip } from "../ui";
+import { FieldError, focusFirstInvalid } from "../components/formErrors";
+import "../styles/agent-settings.css";
 
-const RULES: [string, string, "haiku" | "sonnet" | "opus" | "agent", string][] = [
-  ["1", "The agent called `escalate` on this thread", "opus", "high"],
-  ["2", "Two or more failed runs of this agent on this thread", "opus", "high"],
-  ["3", "Triggering message is `answer`, `notify` or `ask`", "haiku", "low"],
-  ["4", "Thread severity is `high` and the agent default is `haiku`", "sonnet", "medium"],
-  ["5", "Anything else (`request`, `verify`, `decision`, `approval`)", "agent", "medium"],
+type RuleModel = "haiku" | "sonnet" | "opus" | "agent";
+const RULES: [string, string, RuleModel, string][] = [
+  ["1", "The agent escalates the thread", "opus", "high"],
+  ["2", "Two or more failed runs since the last success", "opus", "high"],
+  ["3", "A review result or your reply (answers that continue the work)", "agent", "medium"],
+  ["4", "Other answers, notes and questions", "haiku", "low"],
+  ["5", "High difficulty and the agent's default model is Haiku", "sonnet", "medium"],
+  ["6", "Anything else", "agent", "medium"],
 ];
+
+/** Section header with the scope in plain words. */
+function SectionHead({ title, scope, children }: { title: string; scope: string; children?: ReactNode }) {
+  return (
+    <div className="st-head">
+      <h2 id="st-title">{title}</h2>
+      <p>{scope}</p>
+      {children}
+    </div>
+  );
+}
 
 function IsolationSection() {
   const qc = useQueryClient();
@@ -26,7 +42,6 @@ function IsolationSection() {
   const on = q.data?.allow_host_runners ?? false;
   return (
     <>
-      <div className="section-title"><span>Agent isolation</span></div>
       <div className="switch-row">
         <div className="txt">
           <b id="host-runners-label">Allow agents directly on this machine</b>
@@ -92,80 +107,79 @@ function AccountRowView({ a, onChanged }: { a: Account; onChanged: () => void })
   );
 }
 
-function AddAccountForm({ onChanged }: { onChanged: () => void }) {
+function AddAccountForm({ onChanged, onCancel }: { onChanged: () => void; onCancel?: () => void }) {
   const [label, setLabel] = useState("");
   const [id, setId] = useState("");
   const [idTouched, setIdTouched] = useState(false);
   const [plan, setPlan] = useState<AccountPlan>("pro");
   const [token, setToken] = useState("");
   const [tried, setTried] = useState(false);
+  const labelRef = useRef<HTMLInputElement>(null);
+  const idRef = useRef<HTMLInputElement>(null);
+  const tokenWrap = useRef<HTMLDivElement>(null);
   const m = useMutation({
     mutationFn: () => api.saveAccount({ id, label: label.trim(), plan, token: token.trim() }),
-    onSuccess: () => { setToken(""); setLabel(""); setId(""); setIdTouched(false); setTried(false); onChanged(); },
+    onSuccess: () => { setToken(""); setLabel(""); setId(""); setIdTouched(false); setTried(false); onChanged(); onCancel?.(); },
   });
   const problems = {
     label: label.trim() ? null : "Label is required.",
     id: SLUG.test(id) ? null : "ID must be lowercase letters, digits and dashes, starting with a letter or digit.",
     token: token.trim() ? null : "Token is required.",
   };
-  const show = (k: keyof typeof problems) => tried && problems[k] && <span style={{ color: "var(--err)" }}>{problems[k]}</span>;
+  const show = (k: keyof typeof problems) => <FieldError id={`acc-${k}-err`} msg={tried ? problems[k] : null} />;
   return (
-    <form style={{ maxWidth: 700, display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }} noValidate
-      onSubmit={(e) => { e.preventDefault(); setTried(true); if (!problems.label && !problems.id && !problems.token) m.mutate(); }}>
-      <b>Add account</b>
+    <form style={{ maxWidth: 700, display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }} noValidate aria-label="Add account"
+      onSubmit={(e) => {
+        e.preventDefault(); setTried(true);
+        if (focusFirstInvalid([[problems.label, labelRef.current], [problems.id, idRef.current], [problems.token, tokenWrap.current?.querySelector("input") ?? null]])) return;
+        m.mutate();
+      }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
         <label className="field">Label
-          <input value={label} placeholder="Personal, Work Team" maxLength={60} onChange={(e) => { setLabel(e.target.value); if (!idTouched) setId(slugify(e.target.value)); }} />
+          <input ref={labelRef} value={label} aria-invalid={tried && !!problems.label} aria-describedby="acc-label-err" placeholder="Personal, Work Team" maxLength={60} onChange={(e) => { setLabel(e.target.value); if (!idTouched) setId(slugify(e.target.value)); }} />
           {show("label")}
         </label>
         <label className="field">ID
-          <input className="mono" value={id} placeholder="personal" maxLength={40} onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
+          <input ref={idRef} className="mono" value={id} aria-invalid={tried && !!problems.id} aria-describedby="acc-id-err" placeholder="personal" maxLength={40} onChange={(e) => { setId(e.target.value); setIdTouched(true); }} />
           {show("id")}
         </label>
         <label className="field">Plan
           <select value={plan} onChange={(e) => setPlan(e.target.value as AccountPlan)}>{PLANS.map(([k, n]) => <option key={k} value={k}>{n}</option>)}</select>
         </label>
       </div>
-      <label className="field">Token
+      <div className="field" ref={tokenWrap}>Token
         <TokenInput value={token} onChange={setToken} label="Token" />
         {show("token")}
-      </label>
+      </div>
       <ErrorBox error={m.error} />
-      <div><button className="btn primary" type="submit" disabled={m.isPending}><Icon n="plus" size={14} />Add account</button></div>
+      <div style={{ display: "flex", gap: 8 }}><button className="btn primary" type="submit" disabled={m.isPending}><Icon n="plus" size={14} />Add account</button>{onCancel && <button className="btn ghost" type="button" onClick={onCancel}>Cancel</button>}</div>
     </form>
   );
 }
 
-function WorkspaceAccounts({ accounts }: { accounts: Account[] }) {
+function WorkspaceAccount({ accounts }: { accounts: Account[] }) {
   const app = useApp();
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: (v: { ws: string; account: string | null }) => api.setWorkspaceAccount(v.ws, v.account),
     onSettled: () => { qc.invalidateQueries({ queryKey: ["workspaces"] }); qc.invalidateQueries({ queryKey: ["accounts"] }); },
   });
-  if (app.workspaces.length === 0) return null;
+  const w = app.workspaces.find((x) => x.id === app.workspace);
+  if (!w) return null;
+  const cur = w.claude_account_id ?? "";
   return (
     <>
-      <div className="section-title" style={{ marginTop: 18 }}><span>Account per workspace</span></div>
-      <div className="list">{app.workspaces.map((w) => {
-        const cur = w.claude_account_id ?? "";
-        return (
-          <div key={w.id} className="li">
-            <div>
-              <div className="t">{w.name} {!cur && <Chip tone="warn">No account: agents of this workspace cannot start</Chip>}</div>
-              <div className="d mono">{w.id}</div>
-            </div>
-            <div className="r">
-              <select className="select" aria-label={`Claude account for ${w.name}`} value={cur} disabled={m.isPending && m.variables?.ws === w.id}
-                onChange={(e) => m.mutate({ ws: w.id, account: e.target.value || null })}>
-                <option value="">None</option>
-                {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
-              </select>
-            </div>
-          </div>
-        );
-      })}</div>
-      <div style={{ maxWidth: 700, marginTop: 8 }}><ErrorBox error={m.error} /></div>
+      <div className="field" style={{ maxWidth: 420 }}>
+        <label htmlFor="ws-account">Claude account</label>
+        <select id="ws-account" className="select" value={cur} disabled={m.isPending} aria-describedby="ws-account-desc"
+          onChange={(e) => m.mutate({ ws: w.id, account: e.target.value || null })}>
+          <option value="">None</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
+        <span className="faint" id="ws-account-desc">All agents of this workspace sign in with it and share its usage limits. Accounts are managed under This machine.</span>
+      </div>
+      {!cur && <div className="warnbox" role="status" style={{ marginTop: 8 }}>No account: agents of this workspace cannot start.{accounts.length === 0 ? " Add one under Claude accounts first." : ""}</div>}
+      <div style={{ marginTop: 8 }}><ErrorBox error={m.error} /></div>
     </>
   );
 }
@@ -223,7 +237,7 @@ function CredentialRow({ ws, provider, label, placeholder, cred, onChanged }: { 
   );
 }
 
-function PublishingForm({ ws, wsName }: { ws: string; wsName: string }) {
+function PublishingForm({ ws }: { ws: string }) {
   const qc = useQueryClient();
   const q = usePublishing(ws);
   const p = q.data;
@@ -240,7 +254,6 @@ function PublishingForm({ ws, wsName }: { ws: string; wsName: string }) {
   const credsChanged = () => void qc.invalidateQueries({ queryKey: ["publishing", ws] });
   return (
     <>
-      <div className="section-title" style={{ marginTop: 18 }}><span>Publishing</span><span className="faint">workspace <span className="mono">{wsName}</span></span></div>
       <ErrorBox error={q.error} />
       {q.isLoading && <p className="empty">Loading…</p>}
       {p && (
@@ -293,12 +306,8 @@ function ReposSection() {
   const repos = q.data ?? [];
   return (
     <>
-      <div className="section-title" style={{ marginTop: 18 }}>
-        <span>Repositories</span>
-        <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <span className="faint">workspace <span className="mono">{ws}</span></span>
-          <button className="btn sm" onClick={() => setAdding(true)}><Icon n="plus" size={14} />Add repository</button>
-        </span>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <button className="btn sm" onClick={() => setAdding(true)}><Icon n="plus" size={14} />Add repository</button>
       </div>
       <ErrorBox error={q.error} />
       {q.isLoading && <p className="empty">Loading…</p>}
@@ -320,61 +329,134 @@ function PublishingSection() {
   const app = useApp();
   const w = app.workspaces.find((x) => x.id === app.workspace);
   if (!w) return null;
-  return <PublishingForm key={w.id} ws={w.id} wsName={w.name} />;
+  return <PublishingForm key={w.id} ws={w.id} />;
 }
 
 function AccountsSection() {
   const qc = useQueryClient();
   const q = useAccounts();
+  const [adding, setAdding] = useState(false);
   const changed = () => { qc.invalidateQueries({ queryKey: ["accounts"] }); qc.invalidateQueries({ queryKey: ["workspaces"] }); };
   const accounts = q.data ?? [];
+  const noAccounts = q.isSuccess && accounts.length === 0;
   return (
     <>
-      <div className="section-title"><span>Claude accounts</span><span className="faint mono">{accounts.length}</span></div>
-      <p className="muted" style={{ maxWidth: 700 }}>Agents sign in with your own Claude subscription. Create a token once with <span className="mono">claude setup-token</span> (in a terminal where Claude Code is logged in) and paste it here. Tokens are stored on this machine in <span className="mono">~/.forgehall/secrets</span> (readable only by you), never shown again, and used only by your agent containers.</p>
-      <p className="faint" style={{ maxWidth: 700 }}>All agents of a workspace share that account's usage limits.</p>
+      <p className="muted" style={{ marginTop: 0 }}>Agents sign in with your own Claude subscription. Create a token once with <span className="mono">claude setup-token</span> (in a terminal where Claude Code is logged in) and paste it here. Tokens are stored on this machine in <span className="mono">~/.forgehall/secrets</span> (readable only by you), never shown again, and used only by your agent containers.</p>
       <ErrorBox error={q.error} />
-      {q.isSuccess && accounts.length === 0 && <p className="empty">No accounts yet. Add one below.</p>}
+      {noAccounts && <p className="empty">No accounts yet. Add one below.</p>}
       {accounts.length > 0 && <div className="list">{accounts.map((a) => <AccountRowView key={a.id} a={a} onChanged={changed} />)}</div>}
-      <AddAccountForm onChanged={changed} />
-      {q.isSuccess && <WorkspaceAccounts accounts={accounts} />}
+      {q.isSuccess && (noAccounts || adding
+        ? <AddAccountForm onChanged={changed} onCancel={accounts.length > 0 ? () => setAdding(false) : undefined} />
+        : <div style={{ marginTop: 12 }}><button className="btn sm" onClick={() => setAdding(true)}><Icon n="plus" size={14} />Add account</button></div>)}
     </>
   );
 }
 
+function GeneralSection() {
+  const q = useAccounts();
+  return (
+    <>
+      <ErrorBox error={q.error} />
+      {q.isSuccess ? <WorkspaceAccount accounts={q.data} /> : q.isLoading ? <p className="empty">Loading…</p> : null}
+      <p className="muted" style={{ marginTop: 18 }}>Agents of this workspace: <Link to="/">open the team</Link> to add, start or stop them.</p>
+    </>
+  );
+}
+
+function WorkspacesSection() {
+  const app = useApp();
+  return (
+    <>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+        <button className="btn sm" onClick={() => app.setNewWorkspaceOpen(true)}><Icon n="plus" size={14} />New workspace</button>
+      </div>
+      {app.workspaces.length === 0 ? <p className="empty">None yet. Create one with the button above.</p> : (
+        <div className="list">{app.workspaces.map((w) => (
+          <div key={w.id} className="li"><div><div className="t">{w.name} {w.id === app.workspace && <Chip tone="ok">current</Chip>}</div><div className="d mono">{w.id}</div></div>
+            <div className="r">{w.id !== app.workspace && <button className="btn sm" onClick={() => app.setWorkspace(w.id)}>Switch</button>}</div></div>
+        ))}</div>
+      )}
+    </>
+  );
+}
+
+function StatusSection() {
+  const app = useApp();
+  const sup = useSupervisor();
+  const busUrl = import.meta.env.VITE_BUS_LABEL ?? "http://127.0.0.1:4545";
+  return (
+    <>
+      <div className="kv">
+        <div><span>Bus URL</span><b className="mono">{busUrl}</b></div>
+        <div><span>Console proxy</span><b className="mono">/api → bus</b></div>
+        <div><span>Bus</span><b>{app.offline ? "offline" : app.workspacesLoaded ? "online" : "checking…"}</b></div>
+        <div><span>Supervisor</span><b>{sup.isError ? "unknown" : !sup.data ? "checking…" : sup.data.online ? "running" : "not running"}</b></div>
+      </div>
+      {sup.data && !sup.data.online && <p className="muted">Start it once on this machine with <span className="mono">fh supervise --install</span>; it starts and stops your agents.</p>}
+    </>
+  );
+}
+
+function RoutingSection() {
+  return (
+    <>
+      <p className="muted" style={{ marginTop: 0 }}>When a run is queued, the first rule that matches picks the model and effort. The reason is stored on the run.</p>
+      <div className="tbl-wrap"><table className="tbl">
+        <thead><tr><th>Rule</th><th>Situation</th><th>Model</th><th>Effort</th></tr></thead>
+        <tbody>{RULES.map(([o, sit, m, e]) => (
+          <tr key={o}><td className="mono">{o}</td><td>{sit}</td><td>{m === "agent" ? <span className="muted">agent default</span> : <ModelChip model={m} />}</td><td className="mono">{e}</td></tr>
+        ))}</tbody>
+      </table></div>
+      <p className="faint">Only Haiku, Sonnet and Opus are allowed. Editing these is planned.</p>
+    </>
+  );
+}
+
+type SectionKey = "general" | "repositories" | "publishing" | "accounts" | "isolation" | "workspaces" | "routing" | "status";
+
 export function Settings() {
   const app = useApp();
-  const busUrl = import.meta.env.VITE_BUS_LABEL ?? "http://127.0.0.1:4545";
+  const [params, setParams] = useSearchParams();
+  const wsName = app.workspaces.find((w) => w.id === app.workspace)?.name ?? app.workspace ?? "none";
+  const wsScope = `Applies to the ${wsName} workspace`;
+  const machine = "Applies to every workspace on this machine";
+
+  const WORKSPACE: [SectionKey, string, string, ReactNode][] = [
+    ["general", "General", wsScope, <GeneralSection />],
+    ["repositories", "Repositories", `${wsScope}. Agents work on code from these.`, <ReposSection />],
+    ["publishing", "Publishing", `${wsScope}. How approved work is published.`, <PublishingSection />],
+  ];
+  const MACHINE: [SectionKey, string, string, ReactNode][] = [
+    ["accounts", "Claude accounts", machine, <AccountsSection />],
+    ["isolation", "Agent isolation", machine, <IsolationSection />],
+    ["workspaces", "Workspaces", machine, <WorkspacesSection />],
+    ["routing", "Model routing", `${machine}. Read-only.`, <RoutingSection />],
+    ["status", "Status", machine, <StatusSection />],
+  ];
+  const all = [...WORKSPACE, ...MACHINE];
+  const asked = params.get("section");
+  const cur = all.find(([k]) => k === asked) ?? all[0]!;
+  const go = (k: SectionKey) => setParams({ section: k }, { replace: true });
+  const link = (k: SectionKey, label: string) => (
+    <a key={k} href={`?section=${k}`} aria-current={cur[0] === k ? "page" : undefined}
+      onClick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; e.preventDefault(); go(k); }}>{label}</a>
+  );
   return (
     <>
       <div className="main-head"><div className="title-row"><h1>Settings</h1></div><div /></div>
       <div className="main-body">
-        <IsolationSection />
-        <AccountsSection />
-        <ReposSection />
-        <PublishingSection />
-        <PreviewBadge />
-        <div className="section-title"><span>Bus</span></div>
-        <div className="kv">
-          <div><span>Bus URL</span><b className="mono">{busUrl}</b></div>
-          <div><span>Console proxy</span><b className="mono">/api → bus</b></div>
-          <div><span>Status</span><b>{app.offline ? "offline" : app.workspacesLoaded ? "online" : "checking…"}</b></div>
+        <div className="st-layout">
+          <nav className="st-nav" aria-label="Settings sections">
+            <h2>Workspace: {wsName}</h2>
+            {WORKSPACE.map(([k, l]) => link(k, l))}
+            <h2>This machine</h2>
+            {MACHINE.map(([k, l]) => link(k, l))}
+          </nav>
+          <section className="st-sec" aria-labelledby="st-title">
+            <SectionHead title={cur[1]} scope={cur[2]} />
+            {cur[3]}
+          </section>
         </div>
-        <div className="section-title"><span>Workspaces</span><span className="faint mono">{app.workspaces.length}</span></div>
-        {app.workspaces.length === 0 ? <p className="empty">None yet. Create one with <span className="mono">fh workspace add &lt;id&gt; "&lt;name&gt;"</span>.</p> : (
-          <div className="list">{app.workspaces.map((w) => (
-            <div key={w.id} className="li"><div><div className="t">{w.name} {w.id === app.workspace && <Chip tone="ok">current</Chip>}</div><div className="d mono">{w.id}</div></div>
-              <div className="r">{w.id !== app.workspace && <button className="btn sm" onClick={() => app.setWorkspace(w.id)}>Switch</button>}</div></div>
-          ))}</div>
-        )}
-        <div className="section-title"><span>Model routing rules (v1)</span><span className="faint">first match wins · static copy of docs/concepts/model-routing-and-limits.md</span></div>
-        <div className="tbl-wrap"><table className="tbl">
-          <thead><tr><th>Order</th><th>Situation</th><th>Model</th><th>Effort</th></tr></thead>
-          <tbody>{RULES.map(([o, s, m, e]) => (
-            <tr key={o}><td className="mono">{o}</td><td>{s}</td><td>{m === "agent" ? <span className="muted">agent default</span> : <ModelChip model={m} />}</td><td className="mono">{e}</td></tr>
-          ))}</tbody>
-        </table></div>
-        <p className="faint" style={{ maxWidth: 700 }}>Only haiku, sonnet and opus are allowed. Rules are applied when a run is queued and the reason is stored on the run. Editing them from the console is planned.</p>
       </div>
     </>
   );

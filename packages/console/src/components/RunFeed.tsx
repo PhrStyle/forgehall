@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
 import type { Run, RunEvent } from "../api";
 import { Chip, Icon, ModelChip } from "../ui";
+import { Markdown } from "./Markdown";
+import "../styles/agent-settings.css";
 import { clock, compactInput, money, MONEY_HINT, runDuration } from "../util";
 
 function toolResultText(content: unknown): string {
@@ -56,7 +58,7 @@ export function EventView({ e }: { e: RunEvent }) {
 
 function AssistantBlock({ c, t }: { c: any; t: string }) {
   if (c?.type === "text" && c.text?.trim()) {
-    return <div className="ev"><span className="ico"><Icon n="say" /></span><div><div className="hd"><b>Agent</b><time>{t}</time></div><div className="body"><p style={{ whiteSpace: "pre-wrap" }}>{c.text}</p></div></div></div>;
+    return <div className="ev"><span className="ico"><Icon n="say" /></span><div><div className="hd"><b>Agent</b><time>{t}</time></div><div className="body"><Markdown text={c.text} compact /></div></div></div>;
   }
   if (c?.type === "tool_use") {
     const name: string = c.name ?? "tool";
@@ -67,15 +69,18 @@ function AssistantBlock({ c, t }: { c: any; t: string }) {
       return (
         <div className="ev"><span className="ico" style={{ color: "var(--sonnet)" }}><Icon n="dm" /></span><div>
           <div className="hd"><b>{verb}</b><Chip tone="sonnet">bus</Chip>{inp.to && <span className="muted">→ {inp.to}</span>}<time>{t}</time></div>
-          {text ? <div className="dm busmsg" style={{ whiteSpace: "pre-wrap", padding: "6px 12px" }}>{text}</div> : <div className="card tool"><span className="out">{compactInput(inp)}</span></div>}
+          {text ? <div className="dm busmsg" style={{ padding: "6px 12px" }}><Markdown text={text} compact /></div> : <div className="card tool"><span className="out">{compactInput(inp)}</span></div>}
         </div></div>
       );
     }
+    const summary = compactInput(c.input);
     return (
-      <div className="ev"><span className="ico"><Icon n="tool" /></span><div>
-        <div className="hd"><b>{name}</b><time>{t}</time></div>
-        <div className="card tool"><span className="cmd">{compactInput(c.input)}</span></div>
-      </div></div>
+      <div className="ev"><span className="ico"><Icon n="tool" /></span>
+        <details className="ev-tool">
+          <summary><span className="tname">{name}</span><span className="tsum">{summary}</span><time>{t}</time></summary>
+          <div className="card tool"><span className="cmd">{summary}</span></div>
+        </details>
+      </div>
     );
   }
   return null; // thinking blocks are not shown
@@ -84,12 +89,14 @@ function AssistantBlock({ c, t }: { c: any; t: string }) {
 function ToolResult({ c, t }: { c: any; t: string }) {
   const text = toolResultText(c.content);
   const err = !!c.is_error;
+  const firstLine = text.split("\n").find((l) => l.trim()) ?? "";
   return (
-    <div className="ev"><span className="ico" style={err ? { color: "var(--err)" } : undefined}><Icon n={err ? "info" : "result"} /></span><div>
-      <details><summary>{err ? "Tool error" : "Tool result"} · {text.length} chars <time className="mono faint">{t}</time></summary>
+    <div className="ev"><span className="ico" style={err ? { color: "var(--err)" } : undefined}><Icon n={err ? "info" : "result"} /></span>
+      <details className={`ev-tool${err ? " err" : ""}`}>
+        <summary><span className="tname">{err ? "error" : "result"}</span><span className="tsum">{firstLine || `${text.length} chars`}</span><time>{t}</time></summary>
         <div className="card tool"><span className="out" style={err ? { color: "var(--err)" } : undefined}>{text.slice(0, 4000)}{text.length > 4000 ? "\n…" : ""}</span></div>
       </details>
-    </div></div>
+    </div>
   );
 }
 
@@ -101,7 +108,7 @@ function ResultLine({ kind, p, t }: { kind: string; p: any; t: string }) {
         {p.duration_ms != null && <span className="mono muted">{(p.duration_ms / 1000).toFixed(1)}s</span>}
         {p.total_cost_usd != null && <span className="mono muted">{money(p.total_cost_usd)}</span>}
         <time>{t}</time></div>
-      {p.result && <div className="body muted" style={{ whiteSpace: "pre-wrap", fontSize: 12.5 }}>{String(p.result).slice(0, 1200)}</div>}
+      {p.result && <div className="body muted"><Markdown text={String(p.result).slice(0, 1200)} compact /></div>}
     </div></div>
   );
 }

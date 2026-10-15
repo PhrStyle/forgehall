@@ -5,10 +5,11 @@ import { NoWorkspace } from "../components/Empty";
 import { EventView, RunHeader } from "../components/RunFeed";
 import { SamplePanels, type SampleTab } from "../components/Samples";
 import { AgentSettings } from "../components/AgentSettings";
-import { AgentControls, ContainerChip, ContainerNote, SupervisorBanner } from "../components/Supervisor";
+import { AgentControls, AgentStatusChip, ContainerNote, SupervisorBanner } from "../components/Supervisor";
+import "../styles/agent-settings.css";
 import { PermissionList } from "../components/PermissionCard";
 import { useAgents, usePermissions, useRuns, useRunsEvents } from "../queries";
-import { Avatar, Chip, ErrorBox, ModelChip, StatusChip, WaitBadge } from "../ui";
+import { Avatar, Chip, ErrorBox, ModelChip } from "../ui";
 import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
 type Tab = "activity" | "runs" | "settings" | SampleTab;
@@ -32,7 +33,7 @@ export function AgentPage() {
           <Avatar id={a.id} name={a.name} status={st} size="lg" />
           <div>
             <h1>{a.name}</h1>
-            <div className="meta">{a.role} · {a.waiting_thread ? <Link to={`/threads/${a.waiting_thread}`} className="wait-link"><WaitBadge label="Waiting for your answer" /></Link> : <StatusChip s={st} />} <ContainerChip a={a} /> <ModelChip model={a.run_model ?? a.default_model} /> <span className="mono">{a.id}</span></div>
+            <div className="meta agent-meta">{a.role && <span className="role">{a.role}</span>}<AgentStatusChip a={a} /><span className="chip quiet" title="Model of the current or default run"><ModelChip model={a.run_model ?? a.default_model} /></span><span className="mono">{a.id}</span></div>
           </div>
           <div className="actions"><AgentControls a={a} ws={app.workspace} /> <button className="btn primary" onClick={() => app.openNewTask(a.id)}>Send a task</button></div>
         </div>
@@ -42,7 +43,7 @@ export function AgentPage() {
         </div>
       </div>
       <div style={{ padding: "0 24px" }}><SupervisorBanner /></div>
-      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : tab === "settings" ? <AgentSettings agentId={a.id} runnerOnline={a.runner_online} desiredStopped={a.desired_state === "stopped"} /> : <div className="main-body"><SamplePanels tab={tab} agentId={a.id} /></div>}
+      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : tab === "settings" ? <AgentSettings agentId={a.id} runnerOnline={a.runner_online} desiredStopped={a.desired_state === "stopped"} /> : <div className="main-body"><SamplePanels tab={tab} /></div>}
     </>
   );
 }
