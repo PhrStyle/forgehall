@@ -45,6 +45,11 @@ describe("detectProvider / parseRepoUrl", () => {
     expect(parseRepoUrl("https://dev.azure.com/acme/Shop%20Floor/_git/check%20out").repo).toBe("check out");
   });
 
+  it("reads a project URL as the project's default repository", () => {
+    expect(parseRepoUrl("https://dev.azure.com/acme/checkout").repo).toBe("checkout");
+    expect(parseRepoUrl("https://dev.azure.com/acme/checkout").project).toBe("checkout");
+  });
+
   it("parses the short Azure DevOps form where the project is named like the repository", () => {
     expect(parseRepoUrl("https://dev.azure.com/acme/_git/checkout")).toEqual({
       provider: "azure-devops", apiBase: "https://dev.azure.com/acme", owner: "acme", project: "checkout", repo: "checkout",
@@ -61,7 +66,8 @@ describe("detectProvider / parseRepoUrl", () => {
     expect(() => parseRepoUrl("/srv/git/checkout.git")).toThrow(ProviderError);
     expect(() => parseRepoUrl("file:///srv/git/x")).toThrow(ProviderError);
     expect(() => parseRepoUrl("https://github.com/acme")).toThrow(ProviderError);
-    expect(() => parseRepoUrl("https://dev.azure.com/acme/Shop")).toThrow(ProviderError);
+    expect(() => parseRepoUrl("https://dev.azure.com/acme")).toThrow(ProviderError);
+    expect(() => parseRepoUrl("https://dev.azure.com/acme/Shop/_git")).toThrow(ProviderError);
   });
 });
 

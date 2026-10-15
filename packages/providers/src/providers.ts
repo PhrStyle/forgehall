@@ -79,6 +79,8 @@ export function parseRepoUrl(upstreamUrl: string): RepoRef {
   // Expected: {project}/_git/{repo}, or the short form _git/{repo} that Azure DevOps shows when the
   // project and the repository share a name.
   if (segments.length === 2 && segments[0] === "_git") segments.unshift(segments[1]!.replace(/\.git$/i, ""));
+  // A project URL ({project} alone): its default repository has the project's name.
+  if (segments.length === 1 && segments[0] !== "_git") segments.push("_git", segments[0]!);
   if (!org || segments.length !== 3 || segments[1] !== "_git") throw bad();
   return { provider: "azure-devops", apiBase, owner: org, project: segments[0]!, repo: segments[2]!.replace(/\.git$/i, "") };
 }
