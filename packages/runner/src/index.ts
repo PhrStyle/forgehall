@@ -4,6 +4,7 @@ import { RunClaim, RunnerMode, type RunEvent } from "@forgehall/shared";
 import { billingModeFrom, ClaudeCodeEngine } from "./claude-code.js";
 import type { Engine } from "./engine.js";
 import { commitAndPush, prepareCheckout, type RepoCheckout } from "./workspace.js";
+import { hostEnv } from "./host-access.js";
 
 export type { Engine, EngineResult, EngineRun } from "./engine.js";
 export { ClaudeCodeEngine, billingModeFrom, type BillingMode } from "./claude-code.js";
@@ -104,7 +105,7 @@ export class Runner {
       claim,
       cwd,
       bus: { url: this.cfg.busUrl, token: this.cfg.agentToken },
-      env: this.cfg.engineEnv,
+      env: { ...this.cfg.engineEnv, ...hostEnv(claim.hostAccess) },
       onEvent: (e) => {
         buffer.push(e);
         if (buffer.length >= 50) void flush();

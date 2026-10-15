@@ -65,6 +65,13 @@ export const RunClaim = z.object({
     .default({ allow: [], ask: [], deny: [] }),
   /** Where the runner executes: isolated in a container or VM, or directly on the host (opt-in only). */
   runnerMode: RunnerMode.default("container"),
+  /**
+   * Host tokens this agent was given (Settings → agent → Host access). The runner, not the bus,
+   * decides which environment variables carry them, so a claim cannot set arbitrary variables.
+   */
+  hostAccess: z
+    .array(z.object({ provider: z.enum(["github", "azure-devops"]), token: z.string().min(1) }))
+    .default([]),
   /** Repository checkout for the run, or null for threads without a repo. */
   repo: z
     .object({ id: z.string(), base: z.string(), branch: z.string() })
