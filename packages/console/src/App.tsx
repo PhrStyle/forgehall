@@ -15,6 +15,7 @@ import { Threads } from "./pages/Threads";
 import { ThreadPage } from "./pages/ThreadPage";
 import { AgentPage } from "./pages/AgentPage";
 import { Settings } from "./pages/Settings";
+import { Schedules } from "./pages/Schedules";
 
 export function App() {
   return (
@@ -45,6 +46,7 @@ function Shell() {
         <div className="logo" aria-hidden="true">F</div>
         <NavLink to="/" end className="rail-btn" title="Team"><Icon n="team" /></NavLink>
         <NavLink to="/threads" className="rail-btn" title="Threads"><Icon n="threads" />{waiting > 0 && <span className="badge" />}</NavLink>
+        <NavLink to="/schedules" className="rail-btn" title="Schedules"><Icon n="calendar" /></NavLink>
         <div className="spacer" />
         <NavLink to="/settings" className="rail-btn" title="Settings"><Icon n="settings" /></NavLink>
       </nav>
@@ -65,6 +67,7 @@ function Shell() {
           <Route path="/threads" element={<Threads />} />
           <Route path="/threads/:id" element={<ThreadPage />} />
           <Route path="/agents/:id" element={<AgentPage />} />
+          <Route path="/schedules" element={<Schedules />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<div className="main-body"><p className="empty">Page not found.</p></div>} />
         </Routes>
