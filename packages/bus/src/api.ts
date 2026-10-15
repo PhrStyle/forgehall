@@ -89,8 +89,8 @@ export async function registerApi(app: FastifyInstance, store: Store, adminToken
   app.get<{ Params: { id: string } }>("/api/threads/:id", async (req, reply) => {
     const thread = await store.thread(req.params.id);
     if (!thread) return reply.code(404).send(notFound("thread"));
-    const [messages, runs] = await Promise.all([store.messages(thread.id), store.threadRuns(thread.id)]);
-    return { thread, messages, runs };
+    const [messages, runs, questions] = await Promise.all([store.messages(thread.id), store.threadRuns(thread.id), store.threadQuestions(thread.id)]);
+    return { thread, messages, runs, questions };
   });
 
   app.get<{ Params: { id: string }; Querystring: { after?: string } }>("/api/runs/:id/events", async (req) =>

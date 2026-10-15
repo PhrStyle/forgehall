@@ -44,6 +44,8 @@ export interface MessageRow {
   body: string;
   outcome: Outcome | null;
   reply_to: string | null;
+  /** Choices offered with a question to the user. */
+  options: string[] | null;
   created_at: Date;
 }
 
@@ -385,7 +387,7 @@ export class Store {
    * Posts a message, moves the thread state and, when the recipient is an agent,
    * queues a run for it. Everything happens in one transaction.
    */
-  async postMessage(m: { workspaceId: string; threadId: string; type: MessageType; from: string; to: string; body: string; outcome?: Outcome | null; replyTo?: string | null }): Promise<MessageRow> {
+  async postMessage(m: { workspaceId: string; threadId: string; type: MessageType; from: string; to: string; body: string; outcome?: Outcome | null; replyTo?: string | null; options?: string[] | null }): Promise<MessageRow> {
     return this.sql.begin(async (tx) => {
       const [thread] = await tx<ThreadRow[]>`SELECT * FROM threads WHERE id = ${m.threadId} FOR UPDATE`;
       if (!thread || thread.workspace_id !== m.workspaceId) throw new BusError(`thread ${m.threadId} does not exist in this workspace`);
@@ -403,8 +405,9 @@ export class Store {
           throw new BusError(`${m.to} does not accept requests from ${m.from}`);
         }
       }
-      const [msg] = await tx<MessageRow[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body, outcome, reply_to)
-        VALUES (${m.workspaceId}, ${m.threadId}, ${m.type}, ${m.from}, ${m.to}, ${m.body}, ${m.outcome ?? null}, ${m.replyTo ?? null}) RETURNING *`;
+      const options = m.options?.length ? this.sql.json(m.options) : null;
+      const [msg] = await tx<MessageRow[]>`INSERT INTO messages (workspace_id, thread_id, type, from_actor, to_actor, body, outcome, reply_to, options)
+        VALUES (${m.workspaceId}, ${m.threadId}, ${m.type}, ${m.from}, ${m.to}, ${m.body}, ${m.outcome ?? null}, ${m.replyTo ?? null}, ${options}) RETURNING *`;
       const next = nextState(thread.state, m.type, m.outcome ?? null);
       await tx`UPDATE threads SET state = ${next}, updated_at = now() WHERE id = ${m.threadId}`;
       const closed = next === "done" || next === "cancelled";
@@ -1096,6 +1099,12 @@ export class Store {
     return this.sql`
       SELECT a.id, a.name, a.role, a.default_model, a.runner_seen_at,
         a.desired_state, a.container_state, a.container_detail, a.container_seen_at,
+        (SELECT q.thread_id FROM messages q JOIN threads qt ON qt.id = q.thread_id
+          WHERE q.workspace_id = a.workspace_id AND q.from_actor = a.id AND q.type = 'ask' AND q.to_actor = ${HUMAN}
+            AND qt.state NOT IN ('done', 'cancelled')
+            AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.thread_id = q.thread_id AND r.from_actor = ${HUMAN} AND r.id > q.id
+              AND (r.to_actor = a.id OR r.reply_to = q.id))
+          ORDER BY q.id DESC LIMIT 1) AS waiting_thread,
         (a.runner_seen_at > now() - interval '60 seconds') AS runner_online,
         cur.id AS run_id, cur.thread_id AS run_thread, cur.model AS run_model, cur.started_at AS run_started_at,
         (SELECT count(*)::int FROM runs q WHERE q.workspace_id = a.workspace_id AND q.agent_id = a.id AND q.state = 'queued') AS queued,
@@ -1110,15 +1119,48 @@ export class Store {
       ORDER BY a.id`;
   }
 
+  /**
+   * Why a thread (alias t) waits on the user, if it does: an open question (an ask to the user with
+   * no later message from the user to that agent), a pending approval, or a pending tool
+   * permission. Notices and completions are information and never count. Closed threads never wait.
+   */
+  private waitingSql() {
+    return this.sql`
+      SELECT (x.reason IS NOT NULL) AS waiting_on_you, x.reason AS waiting_reason, x.message_id AS waiting_message_id
+      FROM (SELECT NULL) _
+      LEFT JOIN LATERAL (
+        SELECT 'question' AS reason, q.id AS message_id FROM messages q
+          WHERE q.thread_id = t.id AND q.type = 'ask' AND q.to_actor = ${HUMAN} AND t.state NOT IN ('done', 'cancelled')
+            AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.thread_id = t.id AND r.from_actor = ${HUMAN} AND r.id > q.id
+              AND (r.to_actor = q.from_actor OR r.reply_to = q.id))
+        UNION ALL
+        SELECT 'approval', NULL FROM approvals a WHERE a.thread_id = t.id AND a.state = 'pending'
+        UNION ALL
+        SELECT 'permission', NULL FROM permission_requests p WHERE p.thread_id = t.id AND p.state = 'pending'
+        LIMIT 1
+      ) x ON true`;
+  }
+
+  /** Every question an agent asked the user in a thread, answered or not, for the console's pins. */
+  async threadQuestions(threadId: string) {
+    return this.sql<{ message_id: string; from_actor: string; body: string; options: string[] | null; created_at: Date; answered_by: string | null }[]>`
+      SELECT q.id AS message_id, q.from_actor, q.body, q.options, q.created_at,
+        (SELECT r.id FROM messages r WHERE r.thread_id = q.thread_id AND r.from_actor = ${HUMAN} AND r.id > q.id
+           AND (r.to_actor = q.from_actor OR r.reply_to = q.id) ORDER BY r.id LIMIT 1) AS answered_by
+      FROM messages q WHERE q.thread_id = ${threadId} AND q.type = 'ask' AND q.to_actor = ${HUMAN}
+      ORDER BY q.id`;
+  }
+
   async threadsOverview(workspaceId: string) {
     return this.sql`
       SELECT t.*,
         (SELECT count(*)::int FROM messages m WHERE m.thread_id = t.id) AS message_count,
         (SELECT array_agg(DISTINCT x) FROM (SELECT from_actor AS x FROM messages m WHERE m.thread_id = t.id
            UNION SELECT to_actor FROM messages m WHERE m.thread_id = t.id) p) AS participants,
-        EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.to_actor = ${HUMAN}
-           AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.thread_id = t.id AND r.from_actor = ${HUMAN} AND r.id > m.id)) AS waiting_on_you
-      FROM threads t WHERE t.workspace_id = ${workspaceId} ORDER BY t.updated_at DESC`;
+        w.waiting_on_you, w.waiting_reason, w.waiting_message_id
+      FROM threads t
+      LEFT JOIN LATERAL (${this.waitingSql()}) w ON true
+      WHERE t.workspace_id = ${workspaceId} ORDER BY w.waiting_on_you DESC NULLS LAST, t.updated_at DESC`;
   }
 
   async threadRuns(threadId: string) {

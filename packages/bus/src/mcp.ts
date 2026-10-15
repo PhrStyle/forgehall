@@ -58,13 +58,21 @@ export function busMcpServer(store: Store, me: AgentRow, opts: McpOptions = { pe
   server.registerTool(
     "ask",
     {
-      description: "Asks another agent or the user something within a thread. End the turn afterwards: the reply arrives in a new turn.",
-      inputSchema: { to: recipient, thread_id: z.string(), question: z.string().min(1) },
+      description:
+        "Asks another agent or the user something within a thread. End the turn afterwards: the reply arrives in a new turn. " +
+        `When asking the user (to="${HUMAN}"), start with the question itself in one short sentence, then a blank line and the context; ` +
+        "when the answer is a choice, pass the choices as options (the user sees them as buttons).",
+      inputSchema: {
+        to: recipient,
+        thread_id: z.string(),
+        question: z.string().min(1),
+        options: z.array(z.string().min(1).max(80)).min(2).max(6).optional().describe("short answer choices, for questions to the user"),
+      },
     },
-    ({ to, thread_id, question }) =>
+    ({ to, thread_id, question, options }) =>
       guard(async () => {
         await threadInWs(thread_id);
-        const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "ask", from: me.id, to, body: question });
+        const m = await store.postMessage({ workspaceId: ws, threadId: thread_id, type: "ask", from: me.id, to, body: question, options: options ?? null });
         return ok(`Question sent to ${to} (message ${m.id}). End the turn; the reply will arrive in a new turn.`);
       }),
   );
