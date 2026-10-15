@@ -410,7 +410,15 @@ export class Store {
       const closed = next === "done" || next === "cancelled";
       if (closed) await cancelQueuedRuns(tx, m.threadId);
       // Notices ride along with the recipient's next run instead of waking it up.
-      if (m.to !== HUMAN && m.type !== "notify" && !closed) await this.enqueue(tx, thread, m.to, m.type);
+      if (m.to !== HUMAN && m.type !== "notify" && !closed) {
+        // A verification result or the user's reply usually means more work: route it like a request.
+        let substantive = false;
+        if (m.type === "answer") {
+          if (m.from === HUMAN) substantive = true;
+          else if (m.replyTo) substantive = (await tx<{ type: string }[]>`SELECT type FROM messages WHERE id = ${m.replyTo}`)[0]?.type === "verify";
+        }
+        await this.enqueue(tx, thread, m.to, m.type, 0, substantive);
+      }
       await notify(tx, { kind: "message", workspace: m.workspaceId, thread: m.threadId, message: msg!.id });
       return msg!;
     });
@@ -449,7 +457,7 @@ export class Store {
   // ---------- runs ----------
 
   /** Queues a run unless one is already waiting for the same agent and thread. */
-  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType, delaySeconds = 0): Promise<void> {
+  private async enqueue(tx: Tx, thread: ThreadRow, agentId: string, trigger: MessageType, delaySeconds = 0, substantiveAnswer = false): Promise<void> {
     const [waiting] = await tx`SELECT id FROM runs WHERE thread_id = ${thread.id} AND agent_id = ${agentId} AND state = 'queued'`;
     if (waiting) return;
     const [agent] = await tx<AgentRow[]>`SELECT * FROM agents WHERE workspace_id = ${thread.workspace_id} AND id = ${agentId}`;
@@ -463,6 +471,7 @@ export class Store {
       severity: thread.severity,
       failures,
       escalation: thread.flags.escalate?.[agentId] ?? null,
+      substantiveAnswer,
     });
     await tx`INSERT INTO runs (workspace_id, agent_id, thread_id, model, effort, route_reason, priority, not_before)
       VALUES (${thread.workspace_id}, ${agentId}, ${thread.id}, ${r.model}, ${r.effort}, ${r.reason}, ${r.priority},

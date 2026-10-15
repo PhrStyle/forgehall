@@ -9,6 +9,11 @@ export interface RouteInput {
   failures: number;
   /** Reason given by the agent when it called `escalate`, if any. */
   escalation: string | null;
+  /**
+   * The answer carries real work for the recipient: the result of a verification it asked for, or
+   * the user's reply to its question. Usually it now fixes something or asks for approval.
+   */
+  substantiveAnswer?: boolean;
 }
 
 export interface Route {
@@ -38,6 +43,9 @@ export function route(input: RouteInput): Route {
   }
   if (input.failures >= 2) {
     return { model: "opus", effort: "high", reason: `${input.failures} failed runs on this thread`, priority };
+  }
+  if (input.trigger === "answer" && input.substantiveAnswer) {
+    return { model: input.agentDefault, effort: "medium", reason: "answer that continues the work (verification result or the user's reply): agent default model", priority };
   }
   if (input.trigger === "answer" || input.trigger === "notify" || input.trigger === "ask") {
     return { model: "haiku", effort: "low", reason: `handling ${input.trigger}: short task`, priority };

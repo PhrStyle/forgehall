@@ -11,6 +11,11 @@ describe("route", () => {
     expect(route({ ...base, trigger: "ask" }).model).toBe("haiku");
   });
 
+  it("uses the agent default for answers that continue the work", () => {
+    expect(route({ ...base, trigger: "answer", substantiveAnswer: true }).model).toBe("sonnet");
+    expect(route({ ...base, trigger: "answer", substantiveAnswer: false }).model).toBe("haiku");
+  });
+
   it("uses the agent default for requests and verifications", () => {
     expect(route({ ...base, trigger: "request" })).toMatchObject({ model: "sonnet", effort: "medium" });
     expect(route({ ...base, trigger: "verify", agentDefault: "haiku" }).model).toBe("haiku");
