@@ -3,12 +3,18 @@ import { useState, type FormEvent } from "react";
 import { useApp } from "../context";
 import { api, HUMAN, type Question } from "../api";
 import { Avatar, ErrorBox } from "../ui";
+import { Markdown } from "./Markdown";
 import { ago, clock, splitQuestion } from "../util";
 
 /** Scroll the timeline to a message and flash it. */
 export function jumpTo(messageId: string) {
   const el = document.getElementById(`msg-${messageId}`);
-  if (!el) return;
+  if (!el) {
+    // The conversation tab may be hidden: show it, then retry once it has rendered.
+    window.dispatchEvent(new Event("fh:show-conversation"));
+    window.setTimeout(() => { if (document.getElementById(`msg-${messageId}`)) jumpTo(messageId); }, 60);
+    return;
+  }
   // Instant: a smooth scroll gets cancelled when the clicked button takes focus. The flash shows where it landed.
   el.scrollIntoView({ block: "center" });
   el.classList.remove("flash");
@@ -47,11 +53,11 @@ function NeedsYouCard({ threadId, q, nameOf }: { threadId: string; q: Question; 
         <span className="wait-badge"><i aria-hidden="true" />Needs you</span>
         <time className="faint mono" title={clock(q.created_at)}>{ago(q.created_at)}</time>
       </div>
-      <p className="ny-q">{head}</p>
+      <div className="ny-q"><Markdown text={head} compact /></div>
       {rest && (
         <details className="ny-ctx">
           <summary>Show context</summary>
-          <pre>{rest}</pre>
+          <Markdown text={rest} compact />
         </details>
       )}
       {q.options && q.options.length > 0 && (

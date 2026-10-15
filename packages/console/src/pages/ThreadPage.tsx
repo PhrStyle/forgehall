@@ -1,19 +1,23 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { api, HUMAN, type Approval, type ApprovalResult, type Reviewer, type BranchDiff, type Message, type MessageType, type Run } from "../api";
 import { ReviewerPicker } from "../components/ReviewerPicker";
+import { Markdown } from "../components/Markdown";
 import { NeedsYou, QuestionsHistory } from "../components/Questions";
 import { PermissionList } from "../components/PermissionCard";
 import { useAgents, useApprovals, useDiff, usePermissions, useSupervisor, useThread, useThreads } from "../queries";
 import { Avatar, Chip, ErrorBox, Icon, ModelChip, WaitBadge } from "../ui";
+import { OUTCOME_LABEL, SEND_TYPES, typeLabel } from "../labels";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
-
-const TYPE_ICON: Record<string, string> = { request: "task", ask: "dm", answer: "say", verify: "result", approval: "check", notify: "info", decision: "escalate", complete: "check" };
-const TYPE_TONE: Record<string, string> = { ask: "sonnet", answer: "haiku", verify: "warn", approval: "warn", decision: "opus", complete: "ok" };
+import "../styles/thread.css";
 
 type Item = { kind: "msg"; at: number; m: Message } | { kind: "run"; at: number; r: Run };
+type Tab = "conversation" | "changes" | "runs";
+
+const RUN_TIP = "API-equivalent estimate; with a subscription you are not charged";
+const modelName = (m: string | null | undefined) => (m ? m.charAt(0).toUpperCase() + m.slice(1) : "");
 
 export function ThreadPage() {
   const { id } = useParams();
@@ -23,6 +27,18 @@ export function ThreadPage() {
   const threadList = useThreads(ws).data ?? [];
   const perms = (usePermissions(ws).data ?? []).filter((x) => x.thread_id === id);
   const nameOf = (a: string) => (a === HUMAN ? "You" : agents.find((x) => x.id === a)?.name ?? a);
+  const hasRepo = !!q.data?.thread.repo_id;
+  const diffQ = useDiff(id, hasRepo);
+  const approvalsQ = useApprovals(id, hasRepo);
+  const [tab, setTab] = useState<Tab>("conversation");
+
+  // Questions.tsx asks for the conversation before it scrolls to a message.
+  useEffect(() => {
+    const show = () => setTab("conversation");
+    window.addEventListener("fh:show-conversation", show);
+    return () => window.removeEventListener("fh:show-conversation", show);
+  }, []);
+  useEffect(() => { setTab("conversation"); }, [id]);
 
   const items = useMemo<Item[]>(() => {
     if (!q.data) return [];
@@ -42,10 +58,28 @@ export function ThreadPage() {
   const row = threadList.find((x) => x.id === thread.id);
   const waitReason = openQs.length > 0 ? "question" : row?.waiting_reason ?? (perms.length > 0 ? "permission" : thread.state === "awaiting_approval" ? "approval" : null);
   const stepIdx = thread.state === "external_review" ? 3 : STEPS.indexOf(thread.state);
-  const people = [...new Set(messages.flatMap((m) => [m.from_actor, m.to_actor]))];
+  const people = [...new Set(messages.flatMap((m) => [m.from_actor, m.to_actor]))].filter((p) => p !== "system");
   const msgById = new Map(messages.map((m) => [m.id, m]));
   const finished = thread.state === "done";
-  const hasRepo = !!thread.repo_id;
+  const fileCount = diffQ.data?.files.length;
+  const pr = (approvalsQ.data ?? []).find((a) => a.result?.pr)?.result?.pr;
+  const tabs: { id: Tab; label: string; count?: string }[] = [
+    { id: "conversation", label: "Conversation" },
+    ...(hasRepo ? [{ id: "changes" as const, label: "Changes", count: fileCount != null ? `${fileCount} file${fileCount === 1 ? "" : "s"}` : undefined }] : []),
+    { id: "runs", label: "Runs", count: String(runs.length) },
+  ];
+  const onTabKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === tab);
+    let n = -1;
+    if (e.key === "ArrowRight") n = (i + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") n = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") n = 0;
+    else if (e.key === "End") n = tabs.length - 1;
+    if (n < 0) return;
+    e.preventDefault();
+    setTab(tabs[n]!.id);
+    document.getElementById(`th-tab-${tabs[n]!.id}`)?.focus();
+  };
 
   return (
     <>
@@ -74,75 +108,125 @@ export function ThreadPage() {
       </div>
       <div className="main-body">
         <OfflineRunnerBanner runs={runs} agents={agents} workspace={thread.workspace_id} />
-        <div className="thread-grid">
-          <div className="main-col">
-          <NeedsYou threadId={thread.id} questions={questions} nameOf={nameOf} />
-          <PermissionList items={perms} />
-          {hasRepo && <ChangesCard threadId={thread.id} />}
-          <div className="tl">
-            {items.map((it) => it.kind === "run" ? <RunMark key={`r${it.r.id}`} r={it.r} /> : (
-              <div key={`m${it.m.id}`} id={`msg-${it.m.id}`} className={`tl-item ${it.m.type === "ask" && it.m.to_actor === HUMAN ? "to-you" : ""}`}>
-                <span className="ico"><Icon n={TYPE_ICON[it.m.type] ?? "say"} /></span>
-                <div>
-                  <div className="hd">
-                    <Chip tone={TYPE_TONE[it.m.type]}>{it.m.type}</Chip>
-                    {it.m.type === "ask" && it.m.to_actor === HUMAN && <span className="at-you">@you</span>}
-                    <b>{nameOf(it.m.from_actor)}</b><span className="faint">→</span><b>{nameOf(it.m.to_actor)}</b>
-                    {it.m.outcome && <Chip tone={it.m.outcome === "passed" ? "ok" : "err"}>{it.m.outcome}</Chip>}
-                    <time>{clock(it.m.created_at)}</time>
-                  </div>
-                  {it.m.reply_to && <div className="reply-ref">↳ replies to #{it.m.reply_to}{msgById.get(it.m.reply_to) ? ` (${msgById.get(it.m.reply_to)!.type} from ${nameOf(msgById.get(it.m.reply_to)!.from_actor)})` : ""}</div>}
-                  <div className="body"><pre>{it.m.body}</pre></div>
-                  {it.m.options && it.m.options.length > 0 && (
-                    <div className="opt-chips" aria-label="Options offered">{it.m.options.map((o) => <span key={o} className="opt-chip">{o}</span>)}</div>
-                  )}
-                  {it.m.type === "ask" && it.m.to_actor === HUMAN && qById.get(it.m.id)?.answered_by && <div className="reply-ref">Answered</div>}
-                </div>
-              </div>
-            ))}
-            {items.length === 0 && <p className="empty">No messages yet.</p>}
-          </div>
-          </div>
-
-          <div className="side-cards">
-            <QuestionsHistory questions={questions} nameOf={nameOf} />
-            {hasRepo && <BranchCard threadId={thread.id} />}
-            {hasRepo ? <RepoApprovalCard threadId={thread.id} title={thread.title} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
-            <div className="card">
-              <h3>Runs <span className="mono">{runs.length}</span></h3>
-              {runs.length === 0 ? <p className="empty">No runs yet.</p> : (
-                <div className="kvl">{runs.map((r) => (
-                  <div key={r.id}><span className="mono">#{r.id} {r.agent_id}</span><b><ModelChip model={r.model} /> <span className={r.state === "failed" ? "" : "muted"} style={r.state === "failed" ? { color: "var(--err)" } : undefined}>{r.state}</span></b></div>
-                ))}</div>
-              )}
-            </div>
-            <div className="card">
-              <h3>Participants</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {people.map((p) => <div key={p} style={{ display: "flex", gap: 8, alignItems: "center" }}><Avatar id={p} name={nameOf(p)} />{p === HUMAN ? "You" : <Link to={`/agents/${p}`}>{nameOf(p)}</Link>}</div>)}
-              </div>
-            </div>
-            <Composer threadId={thread.id} defaultTo={thread.assignee} lastMessageId={messages[messages.length - 1]?.id} />
-          </div>
+        <div className="th-tabs" role="tablist" aria-label="Thread sections" onKeyDown={onTabKey}>
+          {tabs.map((t) => (
+            <button key={t.id} id={`th-tab-${t.id}`} type="button" role="tab" className="th-tab" aria-selected={tab === t.id} aria-controls={`th-panel-${t.id}`} tabIndex={tab === t.id ? 0 : -1} onClick={() => setTab(t.id)}>
+              {t.label}{t.count && <span className="mono">· {t.count}</span>}
+            </button>
+          ))}
         </div>
+
+        {tab === "changes" && hasRepo && (
+          <div id="th-panel-changes" role="tabpanel" aria-labelledby="th-tab-changes" className="th-changes"><ChangesCard threadId={thread.id} /></div>
+        )}
+        {tab === "runs" && (
+          <div id="th-panel-runs" role="tabpanel" aria-labelledby="th-tab-runs"><RunsTable runs={runs} nameOf={nameOf} /></div>
+        )}
+        {tab === "conversation" && (
+          <div className="thread-grid" id="th-panel-conversation" role="tabpanel" aria-labelledby="th-tab-conversation">
+            <div className="th-convo">
+              <div className="tl">
+                {items.map((it) => it.kind === "run" ? <RunLine key={`r${it.r.id}`} r={it.r} nameOf={nameOf} /> : (
+                  <MessageItem key={`m${it.m.id}`} m={it.m} nameOf={nameOf} replied={it.m.reply_to ? msgById.get(it.m.reply_to) : undefined} answered={!!qById.get(it.m.id)?.answered_by} />
+                ))}
+                {items.length === 0 && <p className="empty">No messages yet.</p>}
+              </div>
+              <Composer key={thread.id} threadId={thread.id} defaultTo={thread.assignee} messages={messages} />
+            </div>
+
+            <aside className="th-side" aria-label="Thread status">
+              <div className="side-cards">
+                <NeedsYou threadId={thread.id} questions={questions} nameOf={nameOf} />
+                <PermissionList items={perms} />
+                {hasRepo ? <RepoApprovalCard threadId={thread.id} title={thread.title} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
+                {pr && (
+                  <div className="card pr-card">
+                    <h3>Pull request</h3>
+                    <div className="pr-link"><a href={pr.url} target="_blank" rel="noreferrer noopener">Pull request #{pr.id}</a><Chip tone={PR_TONE[pr.status]}>{pr.status}</Chip></div>
+                  </div>
+                )}
+                {hasRepo && <BranchCard threadId={thread.id} />}
+                <div className="card">
+                  <h3>Participants</h3>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {people.map((p) => <div key={p} style={{ display: "flex", gap: 8, alignItems: "center" }}><Avatar id={p} name={nameOf(p)} />{p === HUMAN ? "You" : <Link to={`/agents/${p}`}>{nameOf(p)}</Link>}</div>)}
+                  </div>
+                </div>
+                <QuestionsHistory questions={questions} nameOf={nameOf} />
+              </div>
+            </aside>
+          </div>
+        )}
       </div>
     </>
   );
 }
 
-function RunMark({ r }: { r: Run }) {
-  const dur = runDuration(r);
+function MessageItem({ m, nameOf, replied, answered }: { m: Message; nameOf: (a: string) => string; replied?: Message; answered: boolean }) {
+  const t = typeLabel(m.type);
+  const toYou = m.type === "ask" && m.to_actor === HUMAN;
+  const system = m.from_actor === "system";
   return (
-    <div className="runmark">
-      <span className="ico"><Icon n="run" /></span>
-      <div className="txt">
-        <span className="mono">Run #{r.id}</span><span>·</span><span className="mono">{r.agent_id}</span><ModelChip model={r.model} effort={r.effort} />
-        {r.route_reason && <><span>·</span><span>{r.route_reason}</span></>}
-        <span>·</span><Chip tone={r.state === "done" ? "ok" : r.state === "failed" ? "err" : r.state === "running" ? "warn" : ""}>{r.state}</Chip>
-        {dur && <span className="mono">{dur}</span>}
-        {r.cost_usd != null && <span className="mono" title={MONEY_HINT}>{money(r.cost_usd)}</span>}
-        {r.error && <span style={{ color: "var(--err)" }}>{r.error}</span>}
+    <div id={`msg-${m.id}`} className={`tl-item ${toYou ? "to-you" : ""} ${system ? "sys" : ""}`}>
+      <span className="ico" title={m.type}><Icon n={system ? "info" : t.icon} /></span>
+      <div>
+        <div className="hd">
+          <span title={`Message type: ${m.type}`}><Chip tone={t.tone}><span className="type-chip"><Icon n={t.icon} />{t.label}</span></Chip></span>
+          {toYou && <span className="at-you">@you</span>}
+          <b>{nameOf(m.from_actor)}</b><span className="faint">→</span><b>{nameOf(m.to_actor)}</b>
+          {m.outcome && <Chip tone={m.outcome === "passed" ? "ok" : "err"}>{OUTCOME_LABEL[m.outcome] ?? m.outcome}</Chip>}
+          <time>{clock(m.created_at)}</time>
+        </div>
+        {m.reply_to && <div className="reply-ref">↳ replies to #{m.reply_to}{replied ? ` (${typeLabel(replied.type).label.toLowerCase()} from ${nameOf(replied.from_actor)})` : ""}</div>}
+        <Markdown text={m.body} compact={system} />
+        {m.options && m.options.length > 0 && (
+          <div className="opt-chips" aria-label="Options offered">{m.options.map((o) => <span key={o} className="opt-chip">{o}</span>)}</div>
+        )}
+        {toYou && answered && <div className="reply-ref">Answered</div>}
       </div>
+    </div>
+  );
+}
+
+function RunLine({ r, nameOf }: { r: Run; nameOf: (a: string) => string }) {
+  const dur = runDuration(r);
+  const verb = r.state === "queued" ? "queued" : r.state === "running" ? "is working" : r.state === "failed" ? "failed" : "worked";
+  const summary = `${nameOf(r.agent_id)} ${verb}${dur ? ` ${dur}` : ""} · ${modelName(r.model)}`;
+  return (
+    <details className={`runline ${r.state}`}>
+      <summary title={`Run #${r.id} · ${r.effort} effort${r.route_reason ? ` · ${r.route_reason}` : ""}${r.cost_usd != null ? ` · ${money(r.cost_usd)}` : ""}`}>{summary}</summary>
+      <div className="rl-det">
+        <span className="mono">Run #{r.id}</span>
+        <ModelChip model={r.model} effort={r.effort} />
+        {r.route_reason && <span>why: {r.route_reason}</span>}
+        <span>{r.state}</span>
+        {r.cost_usd != null && <span className="mono" title={RUN_TIP}>{money(r.cost_usd)}</span>}
+        {r.error && <span className="err">{r.error}</span>}
+      </div>
+    </details>
+  );
+}
+
+function RunsTable({ runs, nameOf }: { runs: Run[]; nameOf: (a: string) => string }) {
+  if (runs.length === 0) return <p className="empty">No runs yet.</p>;
+  return (
+    <div className="runs-wrap">
+      <table className="runs-table">
+        <thead><tr><th scope="col">#</th><th scope="col">Agent</th><th scope="col">Model / effort</th><th scope="col">Why</th><th scope="col">State</th><th scope="col" className="num">Duration</th><th scope="col" className="num">Cost</th></tr></thead>
+        <tbody>
+          {runs.map((r) => (
+            <tr key={r.id}>
+              <td className="mono">{r.id}</td>
+              <td>{nameOf(r.agent_id)}</td>
+              <td><ModelChip model={r.model} effort={r.effort} /></td>
+              <td className="muted">{r.route_reason ?? "—"}</td>
+              <td><Chip tone={r.state === "done" ? "ok" : r.state === "failed" ? "err" : r.state === "running" ? "warn" : ""}>{r.state}</Chip>{r.error && <div className="err">{r.error}</div>}</td>
+              <td className="num mono">{runDuration(r) || "—"}</td>
+              <td className="num mono">{r.cost_usd != null ? <span title={RUN_TIP}>{money(r.cost_usd)}</span> : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -161,32 +245,47 @@ function useSend(threadId: string, onDone?: () => void) {
   });
 }
 
-function Composer({ threadId, defaultTo, lastMessageId }: { threadId: string; defaultTo: string | null; lastMessageId?: string }) {
+function Composer({ threadId, defaultTo, messages }: { threadId: string; defaultTo: string | null; messages: Message[] }) {
   const agents = useAgents(useApp().workspace).data ?? [];
   const [to, setTo] = useState("");
-  const [type, setType] = useState<MessageType>("answer");
+  const [typeOverride, setTypeOverride] = useState<MessageType | null>(null);
   const [body, setBody] = useState("");
-  const [reply, setReply] = useState(false);
-  const target = to || defaultTo || agents[0]?.id || "";
-  const m = useSend(threadId, () => setBody(""));
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!target || !body.trim()) return;
-    m.mutate({ to: target, type, body: body.trim(), ...(reply && lastMessageId ? { replyTo: lastMessageId } : {}) });
+  const target = to || (defaultTo && defaultTo !== HUMAN ? defaultTo : "") || agents[0]?.id || "";
+  const targetName = agents.find((a) => a.id === target)?.name ?? "the agent";
+  // Replying: the last message of the thread came from this agent. Otherwise it is a new task.
+  const last = messages[messages.length - 1];
+  const replying = !!last && last.from_actor === target && last.to_actor === HUMAN;
+  const type: MessageType = typeOverride ?? (replying ? "answer" : "request");
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const m = useSend(threadId, () => { setBody(""); setTypeOverride(null); });
+  const send = () => {
+    if (!target || !body.trim() || m.isPending) return;
+    m.mutate({ to: target, type, body: body.trim(), ...(type === "answer" && replying && last ? { replyTo: last.id } : {}) });
   };
+  const submit = (e: FormEvent) => { e.preventDefault(); send(); };
   return (
-    <form className="card decision" onSubmit={submit}>
-      <h3>Message an agent</h3>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <select className="select" aria-label="To" value={target} onChange={(e) => setTo(e.target.value)}>{agents.map((a) => <option key={a.id} value={a.id}>to {a.name}</option>)}</select>
-        <select className="select" aria-label="Type" value={type} onChange={(e) => setType(e.target.value as MessageType)}>{(["answer", "request", "decision", "notify"] as const).map((t) => <option key={t} value={t}>{t}</option>)}</select>
-      </div>
-      <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write a message…" onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submit(e as unknown as FormEvent); }} />
-      {lastMessageId && <label style={{ display: "flex", gap: 6, fontSize: 12, color: "var(--muted)", marginBottom: 8 }}><input type="checkbox" checked={reply} onChange={(e) => setReply(e.target.checked)} />Reply to the last message (#{lastMessageId})</label>}
-      <ErrorBox error={m.error} />
-      <div className="acts"><button className="btn primary" type="submit" disabled={!body.trim() || !target || m.isPending}>{m.isPending ? "Sending…" : "Send"}</button></div>
-      <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>Ctrl+Enter sends. Every message wakes the recipient with a new run.</div>
-    </form>
+    <div className="composer">
+      <form onSubmit={submit} aria-label="Message an agent">
+        <div className="cp-row">
+          <label htmlFor="cp-to">To:</label>
+          <select id="cp-to" className="select" value={target} onChange={(e) => setTo(e.target.value)}>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+        </div>
+        <textarea ref={ref} value={body} aria-label={`Message to ${targetName}`} onChange={(e) => setBody(e.target.value)} placeholder={`Write to ${targetName}…`} onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); } }} />
+        <ErrorBox error={m.error} />
+        <div className="cp-foot">
+          <details className="cp-type">
+            <summary>Message type{typeOverride ? `: ${SEND_TYPES.find((s) => s.type === typeOverride)?.label}` : ""}</summary>
+            <div className="seg" role="radiogroup" aria-label="Message type">
+              {SEND_TYPES.map((s) => (
+                <label key={s.type} title={s.hint}><input type="radio" name="cp-type" checked={type === s.type} onChange={() => setTypeOverride(s.type)} />{s.label}</label>
+              ))}
+            </div>
+          </details>
+          <span className="grow faint" style={{ fontSize: 11.5 }}>Ctrl/⌘+Enter to send. Wakes {targetName} with a new run.</span>
+          <button className="btn primary" type="submit" disabled={!body.trim() || !target || m.isPending}>{m.isPending ? "Sending…" : "Send"}</button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -350,12 +449,11 @@ const PR_TONE = { open: "warn", merged: "ok", closed: "err" } as const;
 
 function ApprovalResultView({ result, base }: { result: ApprovalResult | null; base?: string }) {
   if (!result) return null;
-  const { merged, commit, branch, pr, warnings } = result;
+  const { merged, commit, branch, warnings } = result;
   return (
     <>
       {merged && <p className="ap-result">Merged into {base ?? "base"} as <span className="mono">{short(merged)}</span></p>}
       {!merged && branch && <p className="ap-result">Pushed branch <span className="mono">{branch}</span>{commit && <> at <span className="mono">{short(commit)}</span></>}</p>}
-      {pr && <p className="ap-result"><a href={pr.url} target="_blank" rel="noreferrer">Pull request #{pr.id}</a> <Chip tone={PR_TONE[pr.status]}>{pr.status}</Chip></p>}
       {warnings && warnings.length > 0 && <div className="warnbox" role="status"><ul style={{ margin: 0, paddingLeft: 16 }}>{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></div>}
     </>
   );
@@ -393,7 +491,7 @@ function RepoApprovalCard({ threadId, title }: { threadId: string; title: string
     <div className="card decision">
       <h3>Approval <Chip tone={APPROVAL_TONE[latest.state]}>{latest.state}</Chip></h3>
       <div style={{ marginBottom: 8 }}><Chip tone="warn">{policyLabel(latest.policy, base)}</Chip></div>
-      <p className="ap-summary">{latest.summary}</p>
+      <div className="ap-summary"><Markdown text={latest.summary} compact /></div>
       <div className="kvl" style={{ marginBottom: 10 }}>
         <div><span>Requested by</span><b className="mono">{latest.requested_by}</b></div>
         <div><span>Pinned commit</span><b className="mono">{latest.head_sha ? short(latest.head_sha) : <span className="faint">pinning when the run ends…</span>}</b></div>
