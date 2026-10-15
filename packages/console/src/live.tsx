@@ -29,6 +29,8 @@ export function LiveProvider({ workspace, children }: { workspace: string | null
         case "message":
           inv(["threads", ws]);
           inv(["agents", ws]);
+          // A schedule's last result follows the state of the thread it opened.
+          inv(["schedules", ws]);
           if (c.thread) inv(["thread", c.thread]);
           break;
         case "run":
