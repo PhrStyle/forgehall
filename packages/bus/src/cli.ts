@@ -82,6 +82,12 @@ async function main() {
           const isolation = (values.isolation ?? "docker") as Isolation;
           // The bus may run in a container with its own data path; on the host, tokens are under ~/.forgehall.
           const account = await store.workspaceToken(ws);
+          if (!account && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+            const accounts = await store.accounts();
+            if (accounts.length > 0) {
+              throw new Error(`Workspace ${ws} has no Claude account. In the console, Settings → Account per workspace, pick one for it (${accounts.map((a) => a.label).join(", ")}), then run this again.`);
+            }
+          }
           const container = await startAgent({ workspace: ws, agent: id, agentToken: await store.issueAgentToken(ws, id), isolation, billing: process.env.FORGEHALL_BILLING, workspaceToken: account?.token ?? null });
           console.log(`${ws}/${id} running isolated (${isolation}, ${container}). Logs: docker logs -f fh-${ws}-${id}`);
           break;

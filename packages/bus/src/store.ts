@@ -628,7 +628,18 @@ export class Store {
       // The bus authenticates with a token over HTTPS; it has no SSH keys.
       if (ref.provider === "github" && /^git@/.test(upstreamUrl)) upstreamUrl = `https://github.com/${ref.owner}/${ref.repo}.git`;
     }
-    await ensureStaging(r.workspaceId, r.id, upstreamUrl, base, await this.upstreamAuth(r.workspaceId, provider));
+    const auth = await this.upstreamAuth(r.workspaceId, provider);
+    try {
+      await ensureStaging(r.workspaceId, r.id, upstreamUrl, base, auth);
+    } catch (e) {
+      const why = redactAuth(String((e as { stderr?: string }).stderr ?? (e as Error).message).trim().split("\n").filter(Boolean).slice(-2).join(" "));
+      const hint = provider === "local"
+        ? ""
+        : auth
+          ? ` Check that the workspace's ${provider} token (Settings → Publishing) can access this repository: for GitHub, the token's repository access must include it, with Contents read/write.`
+          : ` The workspace has no ${provider} token: add one in Settings → Publishing (needed for private repositories).`;
+      throw new BusError(`cannot fetch ${base} from ${upstreamUrl}: ${why}.${hint}`);
+    }
     const [row] = await this.sql<RepoRow[]>`INSERT INTO repos (workspace_id, id, upstream_url, provider, base_branch)
       VALUES (${r.workspaceId}, ${r.id}, ${upstreamUrl}, ${provider}, ${base})
       ON CONFLICT (workspace_id, id) DO UPDATE SET upstream_url = EXCLUDED.upstream_url, provider = EXCLUDED.provider, base_branch = EXCLUDED.base_branch
