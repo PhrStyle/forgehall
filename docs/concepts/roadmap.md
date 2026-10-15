@@ -57,12 +57,12 @@ Done:
 - `fh setup` installs the `fh` command (`~/.local/bin/fh`), so the commands the console shows work as written
 - Questions to the user stand out: a "Waiting on you" badge on threads and agents; a pinned card with the short question first and the `ask` `options` as buttons; a jump button to the message that asked; the thread's questions listed, open and answered. Notifications outside the console stay planned under F6
 - Routing: an answer that continues the work (a verification result, or your reply to an agent) runs on the agent's default model; other answers still route to Haiku
+- [Schedules](schedules.md): agents run on a repeat rule (daily, weekdays, chosen days, every N hours, monthly or yearly, once) from the console or API; day, week, month and year views; overlap and usage guards; run now
 
 Remaining:
 
 - Incus VMs (`fh agent run --isolation vm`) and network allowlists, phase 5. Docker containers share the host kernel
 - A full `pull_request` run against Azure DevOps (GitHub validated end to end); reviewer comments back to the agent; pull requests opened when verification starts instead of when approval is requested (F3)
-- [Schedules](schedules.md)
 - `work_touching` and the other work-awareness tools
 - Console form feedback: submitting New task (and other forms) with a required field empty does nothing visible today. Mark required fields, show an inline message on the empty field ("Add a short summary"), focus it, and keep the button's state clear, so a refused submit never looks like a broken button
 - Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2

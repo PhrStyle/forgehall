@@ -8,7 +8,7 @@ Forgehall runs a fixed team of agents (QA, development, research and so on) that
 
 ## Status
 
-Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with live updates) and phase 2 has started: you can register a git repository, let an agent work on a branch of it, review the diff and approve a merge into your upstream. Agents run isolated in Docker containers by default, and tool uses that no rule covers wait for your answer in the console. GitHub and Azure DevOps adapters, pull-request policies, schedules and learning come next. See the [roadmap](docs/concepts/roadmap.md).
+Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with live updates) and phase 2 has started: you can register a git repository, let an agent work on a branch of it, review the diff and approve a merge into your upstream. Agents run isolated in Docker containers by default, and tool uses that no rule covers wait for your answer in the console. GitHub and Azure DevOps adapters, pull-request policies and learning come next. See the [roadmap](docs/concepts/roadmap.md).
 
 ## How it works
 
@@ -24,7 +24,7 @@ Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with 
 | Working now | Planned |
 |---|---|
 | Postgres-backed bus with threads, messages, runs, run events | `pull_request` and `branch_only` approval policies |
-| Web console: team, threads, live run activity, usage, new tasks | Schedules (cron agents) with usage guards |
+| Web console: team, threads, live run activity, usage, new tasks | Notifications outside the console (browser, chat app) |
 | Retries with backoff, blocked threads, stale-run recovery | Agent memory, skills and reflection |
 | MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `complete`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
 | Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
@@ -33,6 +33,7 @@ Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with 
 | Deterministic model routing with recorded reason | Per-account concurrency, preventive pause near limits |
 | Priority queue, per-workspace concurrency cap, one run per thread | Learning branches, reflection, consolidation |
 | Session resume per agent and thread | Local git for agent data, daily encrypted backup |
+| Schedules: repeat rules, day to year calendar in the console, overlap and usage guards | |
 | Real usage read from `rate_limit_event` | Incus VMs, network allowlists |
 | `fh` CLI for workspaces, agents, repositories, threads, runs, usage | |
 | Runner executing the Claude Code CLI, isolated in one Docker container per agent, started and stopped from the console by the supervisor (`fh supervise`) | |

@@ -19,6 +19,7 @@ In the stack the bus is the `bus` service of `infra/docker/compose.yaml`; the im
 | `PERMISSION_TIMEOUT_MS` | `900000` (15 minutes) | How long a permission request waits for you before it counts as denied |
 | `RUN_STALE_SECONDS` | `300` | A running run with no heartbeat for this long is failed and its messages re-queued |
 | `PR_POLL_SECONDS` | `120` | How often the bus checks the pull requests it opened (`pull_request` policy) for merge or close |
+| `SCHEDULE_TICK_SECONDS` | `30` | How often the bus looks for due schedules. See [Schedules](../concepts/schedules.md) |
 | `FORGEHALL_HOME` | `~/.forgehall` on the host, `/data` in the stack | Data directory: staging remotes (`staging/<workspace>/<repo>.git`), local upstreams (`upstreams/`), provider tokens (`secrets/providers/`), agents' host tokens (`secrets/agents/`) and the `admin-token` file. In the stack the host's `~/.forgehall` is mounted at `/data` |
 | `FORGEHALL_ADMIN_TOKEN` | unset | Use this admin token instead of reading or creating `$FORGEHALL_HOME/admin-token`. Read by the bus, `fh` and the console's dev server |
 | `FORGEHALL_BUS_URL` | `http://127.0.0.1:4545` | Where **`fh`** (`fh repo add`) and the console's dev server reach the bus |

@@ -271,6 +271,67 @@ curl -s -X POST http://127.0.0.1:4545/api/permissions/12/decide \
 
 Deciding a request that is not `pending` (already answered or expired) returns 409. A request nobody answers expires after `PERMISSION_TIMEOUT_MS` (15 minutes) and counts as denied.
 
+## Schedules
+
+Status: **implemented**. Concepts and guard rails: [Schedules](../concepts/schedules.md).
+
+| Endpoint | Body | Effect |
+|---|---|---|
+| `GET /api/workspaces/:ws/schedules` | none | Schedule objects of the workspace |
+| `POST /api/workspaces/:ws/schedules` | `{agent, title, prompt, rule, timezone, repo?, thread_mode?, skip_if_open?, skip_usage_above?, enabled?}` | Creates a schedule. 201 with the schedule object. 400 `{error}` if invalid |
+| `PATCH /api/schedules/:id` | Any subset of the same fields | Updates the schedule. Returns the schedule object |
+| `DELETE /api/schedules/:id` | none | Deletes the schedule. 204 |
+| `POST /api/schedules/:id/run` | none | Opens a run now, guards not applied. 201 with `{thread_id}` |
+| `GET /api/workspaces/:ws/schedules/calendar?from=&to=` | none | Occurrences in the range (at most 400 days; past ones from runs, future ones computed for enabled schedules) |
+| `POST /api/schedules/preview` | `{rule, timezone}` | `{cron, description, next}`: the cron, a plain description and the next 5 runs (ISO times) |
+
+- `agent`: the agent id. `repo`: a repository id, or `null`. `thread_mode`: `new` (default) or `same`. `skip_if_open`: default `true`. `skip_usage_above`: `0` to `1`, or `null` (default). `timezone`: an IANA name.
+- `rule` is a repeat rule object with a `kind`:
+
+| `kind` | Other fields |
+|---|---|
+| `daily` | `time` (`HH:MM`) |
+| `weekdays` | `time` |
+| `days` | `days` (chosen weekdays, 0 = Monday, at least one), `time` |
+| `every` | `hours` (1 to 12), `minute` (0 to 59) |
+| `monthly` | `day` (1 to 31 or `"last"`), `months` (1 to 12, optional; none = every month), `time` |
+| `once` | `at` (`YYYY-MM-DDTHH:MM`, local time in `timezone`) |
+
+```json
+{"kind": "weekdays", "time": "02:00"}
+```
+
+Schedule object:
+
+```json
+{"id": "sch_...", "workspace_id": "dev", "agent_id": "vigil", "title": "Nightly regression",
+ "prompt": "Run the suite on checkout-app.", "repo_id": "checkout-app",
+ "rule": {"kind": "weekdays", "time": "02:00"}, "timezone": "America/Sao_Paulo",
+ "thread_mode": "new", "skip_if_open": true, "skip_usage_above": 0.7, "enabled": true,
+ "cron": "0 2 * * 1-5", "description": "Weekdays at 02:00", "next_run_at": "2026-10-16T05:00:00.000Z",
+ "last_run": null, "created_at": "2026-10-15T12:00:00.000Z"}
+```
+
+`last_run` is `null` or `{at, status, reason, thread_id}`. `cron` is `null` for `once`.
+
+Calendar response:
+
+```json
+{"occurrences": [{"schedule_id": "sch_...", "at": "2026-10-16T05:00:00.000Z", "status": "upcoming", "reason": null, "thread_id": null}],
+ "frequent": ["sch_..."]}
+```
+
+`frequent` lists schedules that run every hour or two, which the console draws as bands. Errors return 400 `{error}`, for example `invalid repeat rule: time as HH:MM` or `unknown timezone Mars/X`.
+
+```bash
+curl -s -X POST http://127.0.0.1:4545/api/workspaces/dev/schedules \
+  -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)" \
+  -H 'content-type: application/json' \
+  -d '{"agent":"vigil","title":"Nightly regression","prompt":"Run the suite on checkout-app.","repo":"checkout-app","rule":{"kind":"weekdays","time":"02:00"},"timezone":"America/Sao_Paulo"}'
+```
+
+Schedule changes are sent on the live stream as kind `schedule` (see Live changes below).
+
 ## Settings
 
 `GET /api/settings` returns the machine-wide settings; `PATCH /api/settings` updates them and returns the result.
@@ -287,7 +348,7 @@ curl -s -X PATCH http://127.0.0.1:4545/api/settings \
 
 ## Live changes: `GET /api/events?workspace=dev`
 
-A server-sent events stream. Each event is named after the change kind (`thread`, `message`, `run`, `run_event`, `agent`, `permission`) and a JSON `data` with the workspace, thread and ids involved; comments (`: ping`) keep the connection open every 25 seconds. Omit `workspace` to receive every workspace. The console uses it to refetch what changed.
+A server-sent events stream. Each event is named after the change kind (`thread`, `message`, `run`, `run_event`, `agent`, `permission`, `schedule`) and a JSON `data` with the workspace, thread and ids involved; comments (`: ping`) keep the connection open every 25 seconds. Omit `workspace` to receive every workspace. The console uses it to refetch what changed.
 
 ```text
 event: run

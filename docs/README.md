@@ -19,7 +19,7 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 - [Threads and messages](concepts/threads-and-messages.md): message types, the thread state machine, repository threads, approvals, the QA-to-merge flow.
 - [Model routing and limits](concepts/model-routing-and-limits.md): which model runs what, queue priorities, real usage readings.
 - [Learning and data](concepts/learning-and-data.md): agent memory in local git, approval of learnings, backups (planned).
-- [Schedules](concepts/schedules.md): agents that run on a cron, with overlap and usage guards (planned).
+- [Schedules](concepts/schedules.md): agents that run on a schedule (daily, weekly, monthly, yearly or once), with overlap and usage guards.
 - [Roadmap](concepts/roadmap.md): phases F1 to F6 and where phases 1 and 2 stand.
 
 ## Reference
