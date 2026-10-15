@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type Account, type AccountPlan, type ApprovalPolicy, type HostCredential, type HostProvider } from "../api";
 import { useApp } from "../context";
-import { useAccounts, usePublishing, useSettings } from "../queries";
+import { useAccounts, usePublishing, useRepos, useSettings } from "../queries";
 import { ago, slugify } from "../util";
 import { TokenInput } from "../components/TokenInput";
+import { AddRepoModal, HOST_LABEL } from "../components/AddRepoModal";
 import { Chip, ErrorBox, Icon, ModelChip, PreviewBadge } from "../ui";
 
 const RULES: [string, string, "haiku" | "sonnet" | "opus" | "agent", string][] = [
@@ -283,6 +284,38 @@ function PublishingForm({ ws, wsName }: { ws: string; wsName: string }) {
   );
 }
 
+function ReposSection() {
+  const app = useApp();
+  const ws = app.workspace;
+  const q = useRepos(ws);
+  const [adding, setAdding] = useState(false);
+  if (!ws) return null;
+  const repos = q.data ?? [];
+  return (
+    <>
+      <div className="section-title" style={{ marginTop: 18 }}>
+        <span>Repositories</span>
+        <span style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span className="faint">workspace <span className="mono">{ws}</span></span>
+          <button className="btn sm" onClick={() => setAdding(true)}><Icon n="plus" size={14} />Add repository</button>
+        </span>
+      </div>
+      <ErrorBox error={q.error} />
+      {q.isLoading && <p className="empty">Loading…</p>}
+      {q.isSuccess && repos.length === 0 && <p className="empty">No repositories yet. Add one so agents can work on code.</p>}
+      {repos.length > 0 && (
+        <div className="list">{repos.map((r) => (
+          <div key={r.id} className="li" style={{ gridTemplateColumns: "minmax(0,1fr)" }}>
+            <div className="t"><span className="mono">{r.id}</span> <Chip>{HOST_LABEL[r.provider]}</Chip> <span className="faint">base <span className="mono">{r.base_branch}</span></span></div>
+            <div className="d mono" style={{ overflowWrap: "anywhere" }}>{r.upstream_url}</div>
+          </div>
+        ))}</div>
+      )}
+      {adding && <AddRepoModal ws={ws} onClose={() => setAdding(false)} />}
+    </>
+  );
+}
+
 function PublishingSection() {
   const app = useApp();
   const w = app.workspaces.find((x) => x.id === app.workspace);
@@ -318,6 +351,7 @@ export function Settings() {
       <div className="main-body">
         <IsolationSection />
         <AccountsSection />
+        <ReposSection />
         <PublishingSection />
         <PreviewBadge />
         <div className="section-title"><span>Bus</span></div>

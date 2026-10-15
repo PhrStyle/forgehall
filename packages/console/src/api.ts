@@ -55,7 +55,7 @@ export interface ThreadOverview {
 export type WaitingReason = "question" | "approval" | "permission";
 
 export type RepoProvider = "local" | "github" | "azure-devops";
-export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: RepoProvider; base_branch: string }
+export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: RepoProvider; base_branch: string; created_at?: string }
 
 export type ApprovalPolicy = "merge" | "pull_request" | "branch_only";
 export type HostProvider = "github" | "azure-devops";
@@ -226,6 +226,9 @@ export const api = {
   supervisor: () => request<SupervisorStatus>("/api/supervisor"),
   threads: (ws: string) => request<ThreadOverview[]>(`/api/workspaces/${enc(ws)}/threads`),
   repos: (ws: string) => request<RepoRow[]>(`/api/workspaces/${enc(ws)}/repos`),
+  // Upsert on the bus (the console refuses existing ids). Clones the base branch, so it can take a few seconds.
+  addRepo: (ws: string, b: { id: string; upstream: string; base?: string }) =>
+    request<RepoRow>(`/api/workspaces/${enc(ws)}/repos`, { method: "POST", body: JSON.stringify(b) }),
   diff: (id: string) => request<BranchDiff>(`/api/threads/${enc(id)}/diff`),
   approvals: (id: string) => request<Approval[]>(`/api/threads/${enc(id)}/approvals`),
   decide: (id: string, b: { decision: "approve" | "reject"; comment?: string; reviewers?: string[]; title?: string }) =>

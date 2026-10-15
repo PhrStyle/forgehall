@@ -5,6 +5,7 @@ import { useApp } from "../context";
 import { api } from "../api";
 import { useAgents, useRepos } from "../queries";
 import { ErrorBox } from "../ui";
+import { AddRepoModal } from "./AddRepoModal";
 
 export function NewTaskModal() {
   const app = useApp();
@@ -17,13 +18,14 @@ export function NewTaskModal() {
   const [severity, setSeverity] = useState("");
   const [repo, setRepo] = useState("");
   const repos = useRepos(app.workspace);
+  const [addingRepo, setAddingRepo] = useState(false);
   const first = useRef<HTMLSelectElement>(null);
   useEffect(() => first.current?.focus(), []);
   useEffect(() => {
-    const h = (e: KeyboardEvent) => { if (e.key === "Escape") app.closeNewTask(); };
+    const h = (e: KeyboardEvent) => { if (e.key === "Escape" && !addingRepo) app.closeNewTask(); };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [app]);
+  }, [app, addingRepo]);
   const assignee = to || agents[0]?.id || "";
 
   const m = useMutation({
@@ -60,20 +62,28 @@ export function NewTaskModal() {
             <option value="">Not set</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High (may route to a stronger model)</option>
           </select>
         </label>
-        <label className="field">Repository
-          <select value={repo} onChange={(e) => setRepo(e.target.value)}>
-            <option value="">None</option>
-            {(repos.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.base_branch}</option>)}
-          </select>
-          {repos.data && repos.data.length === 0 && <span className="faint">Add one with <code>fh repo add {app.workspace} &lt;id&gt; &lt;upstream&gt;</code></span>}
+        <div className="field">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <label htmlFor="task-repo">Repository</label>
+            {(repos.data ?? []).length > 0 && <button type="button" className="btn sm ghost" onClick={() => setAddingRepo(true)}>+ Add</button>}
+          </div>
+          {repos.data && repos.data.length === 0 ? (
+            <div><button type="button" className="btn sm" onClick={() => setAddingRepo(true)}>+ Add repository</button></div>
+          ) : (
+            <select id="task-repo" value={repo} onChange={(e) => setRepo(e.target.value)}>
+              <option value="">None</option>
+              {(repos.data ?? []).map((r) => <option key={r.id} value={r.id}>{r.id} · {r.base_branch}</option>)}
+            </select>
+          )}
           {repo && <span className="faint">The agent works on its own branch; you review and merge it from the thread.</span>}
-        </label>
+        </div>
         <ErrorBox error={m.error} />
         <div className="row-end">
           <button type="button" className="btn" onClick={app.closeNewTask}>Cancel</button>
           <button type="submit" className="btn primary" disabled={!valid || m.isPending}>{m.isPending ? "Sending…" : "Send task"}</button>
         </div>
       </form>
+      {addingRepo && app.workspace && <AddRepoModal ws={app.workspace} onClose={() => setAddingRepo(false)} onAdded={(r) => setRepo(r.id)} />}
     </div>
   );
 }
