@@ -45,9 +45,9 @@ export function ContextPanel() {
         {waiting.length === 0 && perms.length === 0 ? <p className="empty">Nothing is waiting for you.</p> : waiting.length === 0 ? null : (
           <div className="ctx-list">
             {waiting.slice(0, 8).map((t) => (
-              <Link key={t.id} to={`/threads/${t.id}`} className="ctx-row">
+              <Link key={t.id} to={`/threads/${t.id}`} className="ctx-row mention">
                 <span><span className="mono faint">{t.id}</span> {t.title}</span>
-                <span className="faint" style={{ fontSize: 11.5 }}>{t.assignee ?? "unassigned"} · {ago(t.updated_at)}</span>
+                <span className="faint" style={{ fontSize: 11.5 }}><span className="wait-reason">{t.waiting_reason ?? "waiting"}</span> · {t.assignee ?? "unassigned"} · {ago(t.updated_at)}</span>
               </Link>
             ))}
           </div>

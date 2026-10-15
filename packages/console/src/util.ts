@@ -109,3 +109,17 @@ export function compactInput(input: unknown, max = 160): string {
 export const MONEY_HINT = "Claude Code's estimate at API prices. With a subscription login this is not charged; usage counts against your plan limits.";
 
 export const slugify = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
+export const WAIT_REASON: Record<string, string> = { question: "question", approval: "approval", permission: "permission" };
+
+/** Split a question into its headline (first paragraph, or first sentence up to ~200 chars) and the rest. */
+export function splitQuestion(body: string): { head: string; rest: string } {
+  const text = body.trim();
+  const para = text.match(/^([\s\S]*?)\n\s*\n([\s\S]*)$/);
+  if (para) return { head: (para[1] ?? "").trim(), rest: (para[2] ?? "").trim() };
+  if (text.length <= 200) return { head: text, rest: "" };
+  const cut = text.slice(0, 200);
+  const m = cut.match(/^[\s\S]*?[.?!](?=\s)/);
+  const head = (m ? m[0] : cut.replace(/\s+\S*$/, "") + "…").trim();
+  return { head, rest: text.slice(m ? m[0].length : cut.replace(/\s+\S*$/, "").length).trim() };
+}

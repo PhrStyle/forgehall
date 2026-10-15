@@ -503,3 +503,46 @@ table.tbl{width:100%;border-collapse:collapse;max-width:1000px;font-size:12.5px}
 .chip.muted-chip{color:var(--faint,var(--muted));background:transparent}
 .warn-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--warn);margin-left:6px}
 .banner.warn .copycmd{width:100%}
+
+/* Mentions: things that wait on the user */
+:root{--mention:#f27ab8}
+.wait-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;line-height:1;padding:3px 8px;border-radius:999px;color:var(--mention);background:color-mix(in srgb,var(--mention) 14%,transparent);border:1px solid color-mix(in srgb,var(--mention) 45%,transparent);white-space:nowrap}
+.wait-badge i{width:6px;height:6px;border-radius:50%;background:var(--mention)}
+.wait-badge .why{font-weight:400;opacity:.85}
+.wait-link{display:inline-flex}.wait-link:hover .wait-badge{background:color-mix(in srgb,var(--mention) 24%,transparent)}
+.trow.wait{border-left-color:var(--mention);background:color-mix(in srgb,var(--mention) 6%,transparent)}
+.agent-row.mentioned{box-shadow:inset 2px 0 0 var(--mention)}
+.agent-row .sub.mention-sub{color:var(--mention)}
+.ctx-row.mention{border-left:2px solid var(--mention)}
+.wait-reason{color:var(--mention)}
+.linkbtn{color:var(--sonnet);font-size:12px;padding:0}.linkbtn:hover{text-decoration:underline}
+
+.needs-you-list{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+.needs-you{border:1px solid color-mix(in srgb,var(--mention) 50%,transparent);border-left:3px solid var(--mention);background:color-mix(in srgb,var(--mention) 7%,var(--raised));border-radius:var(--r);padding:12px 14px}
+.ny-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ny-head time{margin-left:auto}
+.ny-q{font-size:16px;line-height:1.4;font-weight:500;margin:10px 0 6px;overflow-wrap:anywhere;white-space:pre-wrap}
+.ny-ctx summary{cursor:pointer;color:var(--muted);font-size:12px}
+.ny-ctx pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:12.5px;color:var(--muted);margin:6px 0 0;max-height:260px;overflow:auto}
+.ny-opts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ny-reply{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.ny-reply .input{flex:1 1 200px;min-width:0}
+
+.qhist{padding:12px}
+.qhist summary{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;list-style:none}
+.qhist summary::-webkit-details-marker{display:none}
+.qhist summary h3{margin:0}
+.qhist ul{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
+.qhist li{border-top:1px solid var(--line);padding-top:8px}.qhist li:first-child{border-top:0;padding-top:0}
+.qh-top{display:flex;gap:8px;align-items:center;font-size:11px}
+.qh-st{font-weight:600;font-size:11px}.qh-st.open{color:var(--mention)}.qh-st.done{color:var(--ok)}
+.qh-text{margin:3px 0;overflow-wrap:anywhere;font-size:12.5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.qh-links{display:flex;gap:12px}
+
+.tl-item.to-you>div:last-child{border-left:2px solid var(--mention);padding-left:10px}
+.at-you{font-size:11px;font-weight:600;color:var(--mention)}
+.opt-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.opt-chip{font-size:11.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line-2);color:var(--muted)}
+.tl-item.flash{animation:flash 1.5s ease-out}
+@keyframes flash{0%,35%{background:color-mix(in srgb,var(--mention) 22%,transparent);box-shadow:0 0 0 6px color-mix(in srgb,var(--mention) 22%,transparent)}100%{background:transparent;box-shadow:0 0 0 6px transparent}}
+@media (prefers-reduced-motion:reduce){.tl-item.flash{animation:none;background:color-mix(in srgb,var(--mention) 18%,transparent)}}

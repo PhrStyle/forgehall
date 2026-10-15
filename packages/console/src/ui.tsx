@@ -68,3 +68,8 @@ export function Meter({ value }: { value: number | null | undefined }) {
   const v = Math.max(0, Math.min(1, value ?? 0));
   return <div className={`meterbar ${v > 0.95 ? "err" : v > 0.85 ? "warn" : ""}`}><span style={{ width: `${v * 100}%` }} /></div>;
 }
+
+/** "@you": something needs the user's answer. */
+export function WaitBadge({ reason, label }: { reason?: string | null; label?: string }) {
+  return <span className="wait-badge" title="Waiting on you"><i aria-hidden="true" />{label ?? "Waiting on you"}{reason ? <span className="why"> · {reason}</span> : null}</span>;
+}

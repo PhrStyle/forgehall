@@ -8,7 +8,7 @@ import { AgentSettings } from "../components/AgentSettings";
 import { AgentControls, ContainerChip, ContainerNote, SupervisorBanner } from "../components/Supervisor";
 import { PermissionList } from "../components/PermissionCard";
 import { useAgents, usePermissions, useRuns, useRunsEvents } from "../queries";
-import { Avatar, Chip, ErrorBox, ModelChip, StatusChip } from "../ui";
+import { Avatar, Chip, ErrorBox, ModelChip, StatusChip, WaitBadge } from "../ui";
 import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
 type Tab = "activity" | "runs" | "settings" | SampleTab;
@@ -32,7 +32,7 @@ export function AgentPage() {
           <Avatar id={a.id} name={a.name} status={st} size="lg" />
           <div>
             <h1>{a.name}</h1>
-            <div className="meta">{a.role} · <StatusChip s={st} /> <ContainerChip a={a} /> <ModelChip model={a.run_model ?? a.default_model} /> <span className="mono">{a.id}</span></div>
+            <div className="meta">{a.role} · {a.waiting_thread ? <Link to={`/threads/${a.waiting_thread}`} className="wait-link"><WaitBadge label="Waiting for your answer" /></Link> : <StatusChip s={st} />} <ContainerChip a={a} /> <ModelChip model={a.run_model ?? a.default_model} /> <span className="mono">{a.id}</span></div>
           </div>
           <div className="actions"><AgentControls a={a} ws={app.workspace} /> <button className="btn primary" onClick={() => app.openNewTask(a.id)}>Send a task</button></div>
         </div>

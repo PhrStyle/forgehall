@@ -4,9 +4,10 @@ import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context";
 import { api, HUMAN, type Approval, type ApprovalResult, type Reviewer, type BranchDiff, type Message, type MessageType, type Run } from "../api";
 import { ReviewerPicker } from "../components/ReviewerPicker";
+import { NeedsYou, QuestionsHistory } from "../components/Questions";
 import { PermissionList } from "../components/PermissionCard";
-import { useAgents, useApprovals, useDiff, usePermissions, useSupervisor, useThread } from "../queries";
-import { Avatar, Chip, ErrorBox, Icon, ModelChip } from "../ui";
+import { useAgents, useApprovals, useDiff, usePermissions, useSupervisor, useThread, useThreads } from "../queries";
+import { Avatar, Chip, ErrorBox, Icon, ModelChip, WaitBadge } from "../ui";
 import { ago, clock, money, MONEY_HINT, runDuration, STATE_LABEL, STEPS, stateTone } from "../util";
 
 const TYPE_ICON: Record<string, string> = { request: "task", ask: "dm", answer: "say", verify: "result", approval: "check", notify: "info", decision: "escalate", complete: "check" };
@@ -19,6 +20,7 @@ export function ThreadPage() {
   const q = useThread(id);
   const ws = useApp().workspace;
   const agents = useAgents(ws).data ?? [];
+  const threadList = useThreads(ws).data ?? [];
   const perms = (usePermissions(ws).data ?? []).filter((x) => x.thread_id === id);
   const nameOf = (a: string) => (a === HUMAN ? "You" : agents.find((x) => x.id === a)?.name ?? a);
 
@@ -34,6 +36,11 @@ export function ThreadPage() {
   if (q.isLoading) return <div className="main-body"><p className="empty">Loading…</p></div>;
   if (q.error || !q.data) return <div className="main-body"><Link to="/threads" className="btn sm ghost">← Threads</Link><ErrorBox error={q.error ?? new Error("Thread not found")} /></div>;
   const { thread, messages, runs } = q.data;
+  const questions = q.data.questions ?? [];
+  const openQs = questions.filter((x) => !x.answered_by);
+  const qById = new Map(questions.map((x) => [x.message_id, x]));
+  const row = threadList.find((x) => x.id === thread.id);
+  const waitReason = openQs.length > 0 ? "question" : row?.waiting_reason ?? (perms.length > 0 ? "permission" : thread.state === "awaiting_approval" ? "approval" : null);
   const stepIdx = thread.state === "external_review" ? 3 : STEPS.indexOf(thread.state);
   const people = [...new Set(messages.flatMap((m) => [m.from_actor, m.to_actor]))];
   const msgById = new Map(messages.map((m) => [m.id, m]));
@@ -50,6 +57,7 @@ export function ThreadPage() {
           <Chip><span className="mono">{thread.id}</span></Chip>
           <h1>{thread.title}</h1>
           <Chip tone={stateTone(thread.state)}>{STATE_LABEL[thread.state]}</Chip>
+          {waitReason && <WaitBadge reason={waitReason} />}
           {thread.repo_id && <Chip><span className="mono">{thread.repo_id}{thread.branch ? ` · ${thread.branch}` : ""}</span></Chip>}
           {thread.severity && <Chip tone={thread.severity === "high" ? "err" : thread.severity === "medium" ? "warn" : ""}>{thread.severity}</Chip>}
           <div className="meta">assignee <span className="mono">{thread.assignee ?? "none"}</span> · updated {ago(thread.updated_at)}</div>
@@ -68,21 +76,27 @@ export function ThreadPage() {
         <OfflineRunnerBanner runs={runs} agents={agents} workspace={thread.workspace_id} />
         <div className="thread-grid">
           <div className="main-col">
+          <NeedsYou threadId={thread.id} questions={questions} nameOf={nameOf} />
           <PermissionList items={perms} />
           {hasRepo && <ChangesCard threadId={thread.id} />}
           <div className="tl">
             {items.map((it) => it.kind === "run" ? <RunMark key={`r${it.r.id}`} r={it.r} /> : (
-              <div key={`m${it.m.id}`} className="tl-item">
+              <div key={`m${it.m.id}`} id={`msg-${it.m.id}`} className={`tl-item ${it.m.type === "ask" && it.m.to_actor === HUMAN ? "to-you" : ""}`}>
                 <span className="ico"><Icon n={TYPE_ICON[it.m.type] ?? "say"} /></span>
                 <div>
                   <div className="hd">
                     <Chip tone={TYPE_TONE[it.m.type]}>{it.m.type}</Chip>
+                    {it.m.type === "ask" && it.m.to_actor === HUMAN && <span className="at-you">@you</span>}
                     <b>{nameOf(it.m.from_actor)}</b><span className="faint">→</span><b>{nameOf(it.m.to_actor)}</b>
                     {it.m.outcome && <Chip tone={it.m.outcome === "passed" ? "ok" : "err"}>{it.m.outcome}</Chip>}
                     <time>{clock(it.m.created_at)}</time>
                   </div>
                   {it.m.reply_to && <div className="reply-ref">↳ replies to #{it.m.reply_to}{msgById.get(it.m.reply_to) ? ` (${msgById.get(it.m.reply_to)!.type} from ${nameOf(msgById.get(it.m.reply_to)!.from_actor)})` : ""}</div>}
                   <div className="body"><pre>{it.m.body}</pre></div>
+                  {it.m.options && it.m.options.length > 0 && (
+                    <div className="opt-chips" aria-label="Options offered">{it.m.options.map((o) => <span key={o} className="opt-chip">{o}</span>)}</div>
+                  )}
+                  {it.m.type === "ask" && it.m.to_actor === HUMAN && qById.get(it.m.id)?.answered_by && <div className="reply-ref">Answered</div>}
                 </div>
               </div>
             ))}
@@ -91,6 +105,7 @@ export function ThreadPage() {
           </div>
 
           <div className="side-cards">
+            <QuestionsHistory questions={questions} nameOf={nameOf} />
             {hasRepo && <BranchCard threadId={thread.id} />}
             {hasRepo ? <RepoApprovalCard threadId={thread.id} title={thread.title} /> : thread.state === "awaiting_approval" && <ApprovalCard threadId={thread.id} assignee={thread.assignee} />}
             <div className="card">

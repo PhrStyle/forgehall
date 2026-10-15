@@ -22,6 +22,8 @@ export interface AgentOverview {
   last_error: string | null;
   last_ended_at: string | null;
   runs_today: number;
+  /** A thread where this agent waits for the user's answer. */
+  waiting_thread?: string | null;
   /** A runner for this agent asked for work in the last minute. */
   runner_online: boolean | null;
   desired_state?: "running" | "stopped";
@@ -44,9 +46,13 @@ export interface ThreadOverview {
   message_count: number;
   participants: string[] | null;
   waiting_on_you: boolean;
+  waiting_reason?: WaitingReason | null;
+  waiting_message_id?: string | null;
   repo_id?: string | null;
   branch?: string | null;
 }
+
+export type WaitingReason = "question" | "approval" | "permission";
 
 export type RepoProvider = "local" | "github" | "azure-devops";
 export interface RepoRow { workspace_id: string; id: string; upstream_url: string; provider: RepoProvider; base_branch: string }
@@ -100,8 +106,13 @@ export interface Message {
   body: string;
   outcome: "passed" | "failed" | null;
   reply_to: string | null;
+  /** Answer choices an agent offered with a question. */
+  options?: string[] | null;
   created_at: string;
 }
+
+/** An `ask` an agent sent to the user; answered_by is the id of the user's answer (null = open). */
+export interface Question { message_id: string; from_actor: string; body: string; options: string[] | null; created_at: string; answered_by: string | null }
 
 export interface Run {
   id: string;
@@ -120,7 +131,7 @@ export interface Run {
   error: string | null;
 }
 
-export interface ThreadDetail { thread: Omit<ThreadOverview, "message_count" | "participants" | "waiting_on_you">; messages: Message[]; runs: Run[] }
+export interface ThreadDetail { thread: Omit<ThreadOverview, "message_count" | "participants" | "waiting_on_you">; messages: Message[]; runs: Run[]; questions?: Question[] }
 
 export interface RunEvent { seq: number; ts: string; kind: string; payload: any }
 

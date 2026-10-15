@@ -2,7 +2,7 @@ import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { AppProvider, useApp } from "./context";
 import { LiveProvider, useLiveStatus } from "./live";
 import { useAgents, usePermissions, useThreads } from "./queries";
-import { Avatar, Icon, StatusChip } from "./ui";
+import { Avatar, Icon, StatusChip, WaitBadge } from "./ui";
 import { agentStatus } from "./util";
 import { ContextPanel } from "./components/ContextPanel";
 import { AddAgentModal } from "./components/AddAgentModal";
@@ -102,13 +102,13 @@ function Side() {
           const st = stopped ? "idle" : agentStatus(a);
           return (
             <li key={a.id}>
-              <NavLink to={`/agents/${a.id}`} className={`agent-row ${match?.params.id === a.id ? "active" : ""}`} aria-current={match?.params.id === a.id ? "true" : undefined}>
+              <NavLink to={`/agents/${a.id}`} className={`agent-row ${a.waiting_thread ? "mentioned" : ""} ${match?.params.id === a.id ? "active" : ""}`} aria-current={match?.params.id === a.id ? "true" : undefined}>
                 <Avatar id={a.id} name={a.name} status={st} />
                 <div style={{ minWidth: 0 }}>
                   <div className="nm"><span>{a.name}</span>{a.container_state === "error" && <i className="warn-dot" title={a.container_detail ?? "The container could not start"} aria-label={`Container error: ${a.container_detail ?? "could not start"}`} />}{pendingBy.has(a.id) && <i className="perm-dot" title="Waiting for your permission" aria-label="Has a pending permission request" />}<span className="role">{a.role}</span></div>
-                  <div className={`sub ${a.desired_state === "stopped" && !a.run_id ? "muted" : ""}`}>{a.desired_state === "stopped" && !a.run_id ? "Stopped" : a.run_thread ? `Working on ${a.run_thread}` : a.queued ? `${a.queued} queued` : st === "error" ? "Last run failed" : "Idle"}</div>
+                  <div className={`sub ${a.waiting_thread ? "mention-sub" : a.desired_state === "stopped" && !a.run_id ? "muted" : ""}`}>{a.waiting_thread ? "Waiting for your answer" : a.desired_state === "stopped" && !a.run_id ? "Stopped" : a.run_thread ? `Working on ${a.run_thread}` : a.queued ? `${a.queued} queued` : st === "error" ? "Last run failed" : "Idle"}</div>
                 </div>
-                {stopped ? <span className="chip muted-chip">Stopped</span> : <StatusChip s={st} />}
+                {a.waiting_thread ? <WaitBadge label="@you" /> : stopped ? <span className="chip muted-chip">Stopped</span> : <StatusChip s={st} />}
               </NavLink>
             </li>
           );

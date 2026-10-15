@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { ThreadOverview } from "../api";
-import { Chip, People } from "../ui";
+import { Chip, People, WaitBadge } from "../ui";
 import { ago, STATE_LABEL, stateTone } from "../util";
 
 export function ThreadRow({ t }: { t: ThreadOverview }) {
@@ -13,7 +13,7 @@ export function ThreadRow({ t }: { t: ThreadOverview }) {
           <Chip tone={stateTone(t.state)}>{STATE_LABEL[t.state]}</Chip>
           {t.severity && <Chip tone={t.severity === "high" ? "err" : t.severity === "medium" ? "warn" : ""}>{t.severity}</Chip>}
           {t.repo_id && <Chip><span className="mono">{t.repo_id}{t.branch ? ` · ${t.branch}` : ""}</span></Chip>}
-          {t.waiting_on_you && <span className="wmark">● waiting on you</span>}
+          {t.waiting_on_you && <WaitBadge reason={t.waiting_reason} />}
         </div>
         <div className="t2">
           <People ids={t.participants ?? []} />
