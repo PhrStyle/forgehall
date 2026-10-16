@@ -312,7 +312,7 @@ function ApprovalCard({ threadId, assignee }: { threadId: string; assignee: stri
 /** Close (done / cancelled) or reopen a thread. Cancelling and reopening ask for one more step. */
 function ThreadActions({ threadId, state, canReopen }: { threadId: string; state: string; canReopen: boolean }) {
   const qc = useQueryClient();
-  const { toast } = useApp();
+  const { toast, workspace } = useApp();
   const [mode, setMode] = useState<"idle" | "cancel" | "reopen">("idle");
   const [note, setNote] = useState("");
   const done = () => { setMode("idle"); setNote(""); void qc.invalidateQueries(); };
@@ -324,9 +324,17 @@ function ThreadActions({ threadId, state, canReopen }: { threadId: string; state
     mutationFn: () => api.reopenThread(threadId, note.trim()),
     onSuccess: () => { toast("Thread reopened"); done(); },
   });
+  const agentsQ = useAgents(workspace);
+  const reflect = useMutation({
+    mutationFn: () => api.reflect(threadId),
+    onSuccess: (r) => {
+      const nm = r.agents.map((id) => agentsQ.data?.find((a) => a.id === id)?.name ?? id);
+      toast(nm.length === 0 ? "No agent worked on this thread" : `${nm.join(", ")} will look back at this thread`);
+    },
+  });
   const closed = state === "done" || state === "cancelled";
   const reopenable = closed || state === "blocked";
-  const err = close.error ?? reopen.error;
+  const err = close.error ?? reopen.error ?? reflect.error;
 
   if (mode === "cancel") return (
     <div className="actions th-actions">
@@ -349,6 +357,7 @@ function ThreadActions({ threadId, state, canReopen }: { threadId: string; state
       {!closed && <button className="btn sm" disabled={close.isPending} onClick={() => close.mutate("done")}>Mark done</button>}
       {!closed && <button className="btn sm ghost" onClick={() => setMode("cancel")}>Cancel…</button>}
       {reopenable && canReopen && <button className="btn sm" onClick={() => setMode("reopen")}>Reopen…</button>}
+      <button className="btn sm ghost" disabled={reflect.isPending} title="Ask the agents of this thread to look back and keep what they learned" onClick={() => reflect.mutate()}>{reflect.isPending ? "Asking…" : "Learn from this thread"}</button>
       {err && <ErrorBox error={err} />}
     </div>
   );

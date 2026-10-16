@@ -4,6 +4,7 @@ import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
 import { EventView, RunHeader } from "../components/RunFeed";
 import { SamplePanels, type SampleTab } from "../components/Samples";
+import { HistoryTab, MemoryTab, SkillsTab } from "../components/Learning";
 import { AgentSettings } from "../components/AgentSettings";
 import { AgentControls, AgentStatusChip, ContainerNote, SupervisorBanner } from "../components/Supervisor";
 import "../styles/agent-settings.css";
@@ -12,8 +13,8 @@ import { useAgents, usePermissions, useRuns, useRunsEvents } from "../queries";
 import { Avatar, Chip, ErrorBox, ModelChip } from "../ui";
 import { agentStatus, ago, clock, money, MONEY_HINT, runDuration } from "../util";
 
-type Tab = "activity" | "runs" | "settings" | SampleTab;
-const TABS: [Tab, string][] = [["activity", "Activity"], ["runs", "Runs"], ["memory", "Memory"], ["skills", "Skills"], ["environment", "Environment"], ["versions", "Versions"], ["settings", "Settings"]];
+type Tab = "activity" | "runs" | "settings" | "memory" | "skills" | "history" | SampleTab;
+const TABS: [Tab, string][] = [["activity", "Activity"], ["runs", "Runs"], ["memory", "Memory"], ["skills", "Skills"], ["environment", "Environment"], ["history", "History"], ["settings", "Settings"]];
 
 export function AgentPage() {
   const { id } = useParams();
@@ -43,7 +44,7 @@ export function AgentPage() {
         </div>
       </div>
       <div style={{ padding: "0 24px" }}><SupervisorBanner /></div>
-      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : tab === "settings" ? <AgentSettings agentId={a.id} runnerOnline={a.runner_online} desiredStopped={a.desired_state === "stopped"} /> : <div className="main-body"><SamplePanels tab={tab} /></div>}
+      {tab === "activity" ? <Activity agentId={a.id} /> : tab === "runs" ? <RunsTable agentId={a.id} /> : tab === "memory" ? <MemoryTab agentId={a.id} /> : tab === "skills" ? <SkillsTab agentId={a.id} /> : tab === "history" ? <HistoryTab agentId={a.id} /> : tab === "settings" ? <AgentSettings agentId={a.id} runnerOnline={a.runner_online} desiredStopped={a.desired_state === "stopped"} /> : <div className="main-body"><SamplePanels tab={tab} /></div>}
     </>
   );
 }

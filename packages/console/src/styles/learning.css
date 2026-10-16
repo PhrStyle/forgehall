@@ -1,0 +1,25 @@
+.ln-card{background:var(--raised);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-top:10px;max-width:900px}
+.ln-head{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.ln-head .nm{font-weight:500;display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0;overflow-wrap:anywhere}
+.ln-head .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ln-body{margin-top:8px;min-width:0;overflow-wrap:anywhere}
+.ln-card textarea,.ln-form textarea,.kn-edit{width:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r);padding:8px 10px;resize:vertical;min-height:110px}
+.ln-form{display:flex;flex-direction:column;gap:10px;max-width:900px;margin-top:10px}
+.ln-form input{background:var(--bg);border:1px solid var(--line-2);border-radius:var(--r);padding:8px 10px}
+.ln-confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.ln-reason{color:var(--muted);font-size:12.5px;margin-top:4px;overflow-wrap:anywhere}
+.ln-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.ln-chips .chip.add{color:var(--ok)} .ln-chips .chip.del{color:var(--err)} .ln-chips .chip.mod{color:var(--warn)}
+.ln-sub{color:var(--faint);font-size:12px}
+.ln-prop{border-color:color-mix(in srgb,var(--warn) 45%,var(--line))}
+.ln-file{margin-top:8px}
+.ln-file h4{margin:0 0 4px;font-size:11.5px;color:var(--muted);font-weight:500}
+.ln-file pre.raw{margin:0;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.ln-timeline{list-style:none;margin:0;padding:0;max-width:900px}
+.kn-edit{font-family:var(--font-mono);font-size:12.5px;min-height:420px;line-height:1.5}
+.kn-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.kn-bar .grow{flex:1}
+.kn-over{color:var(--err)}
+.kn-preview{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;min-height:200px}
+/* Memory and skills are prose: wrap long lines instead of scrolling sideways. */
+.lh-diff{white-space:pre-wrap;overflow-wrap:anywhere}

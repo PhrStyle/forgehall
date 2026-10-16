@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
 import { useApp } from "../context";
 import { NoWorkspace } from "../components/Empty";
+import { ProposalList } from "../components/Learning";
 import { PermissionList } from "../components/PermissionCard";
 import { splitQuestion, ago } from "../util";
-import { usePermissions, useThread, useThreads, useApprovals } from "../queries";
+import { useLearningProposals, usePermissions, useThread, useThreads, useApprovals } from "../queries";
 import { Chip, ErrorBox, WaitBadge } from "../ui";
 import type { ThreadOverview } from "../api";
 
@@ -43,19 +44,21 @@ export function Inbox() {
   const app = useApp();
   const threads = useThreads(app.workspace);
   const perms = usePermissions(app.workspace).data ?? [];
+  const props = useLearningProposals(app.workspace).data ?? [];
   if (!app.workspace) return <NoWorkspace />;
   const rows = (threads.data ?? []).filter((t) => t.waiting_on_you).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   return (
     <>
       <div className="main-head">
-        <div className="title-row"><h1>Inbox</h1><div className="meta">Threads and permissions that wait on you</div></div>
+        <div className="title-row"><h1>Inbox</h1><div className="meta">Threads, permissions and learning proposals that wait on you</div></div>
         <div />
       </div>
       <div className="main-body">
         <ErrorBox error={threads.error} />
         {perms.length > 0 && <PermissionList items={perms} />}
+        <ProposalList />
         {rows.length > 0 && <div className="list">{rows.map((t) => <Row key={t.id} t={t} />)}</div>}
-        {threads.isSuccess && rows.length === 0 && perms.length === 0 && <p className="empty">Nothing waits on you.</p>}
+        {threads.isSuccess && rows.length === 0 && perms.length === 0 && props.length === 0 && <p className="empty">Nothing waits on you.</p>}
       </div>
     </>
   );

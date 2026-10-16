@@ -52,6 +52,27 @@ function EditForm({ ws, s }: { ws: string; s: Settings }) {
   );
 }
 
+function LearningSwitch({ ws, s, name }: { ws: string; s: Settings; name: string }) {
+  const qc = useQueryClient();
+  const on = s.learning?.require_approval ?? false;
+  const m = useMutation({
+    mutationFn: (v: boolean) => api.patchAgent(ws, s.id, { require_learning_approval: v }),
+    onSuccess: (r) => { qc.setQueryData(["agentSettings", ws, s.id], r); void qc.invalidateQueries({ queryKey: ["agentSettings", ws, s.id] }); void qc.invalidateQueries({ queryKey: ["learning"] }); },
+  });
+  return (
+    <>
+      <div className="switch-row">
+        <div className="txt">
+          <b id="learn-approval-label">Ask before saving to memory</b>
+          <span className="muted" id="learn-approval-desc">Off: {name} keeps what it learns at once; every change is in History and can be undone. On: each change waits for your approval in the Inbox.</span>
+        </div>
+        <button type="button" role="switch" className="switch" aria-checked={on} aria-labelledby="learn-approval-label" aria-describedby="learn-approval-desc" disabled={m.isPending} onClick={() => m.mutate(!on)} />
+      </div>
+      <div style={{ maxWidth: 700, marginTop: 8 }}><ErrorBox error={m.error} /></div>
+    </>
+  );
+}
+
 function HostRow({ ws, agent, provider, label, placeholder, cred }: { ws: string; agent: string; provider: HostProvider; label: string; placeholder: string; cred?: HostCredential }) {
   const qc = useQueryClient();
   const [mode, setMode] = useState<"none" | "set" | "remove">("none");
@@ -114,6 +135,9 @@ export function AgentSettings({ agentId, runnerOnline, desiredStopped }: { agent
         <>
           <div className="section-title"><span>Agent</span></div>
           <EditForm key={s.id} ws={ws} s={s} />
+
+          <div className="section-title"><span>Learning</span></div>
+          <LearningSwitch ws={ws} s={s} name={s.name} />
 
           <div className="section-title"><span>Host access</span></div>
           <p className="muted" style={{ maxWidth: 700 }}>Given to this agent's runs as <span className="mono">GH_TOKEN</span> (GitHub) or <span className="mono">AZURE_DEVOPS_EXT_PAT</span> (Azure DevOps), never to other agents. The token's own scopes decide what the agent can do: prefer read-only tokens, and give write access only to agents that must create or edit on the host. Commands that use it still ask for your permission unless you chose Always allow.</p>

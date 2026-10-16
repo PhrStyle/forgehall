@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { NavLink, Route, Routes, useLocation, useMatch } from "react-router-dom";
 import { AppProvider, useApp } from "./context";
 import { LiveProvider, useLiveStatus } from "./live";
-import { useAgents, usePermissions, useThreads } from "./queries";
+import { useAgents, useLearningProposals, usePermissions, useThreads } from "./queries";
 import { Avatar, Icon, StatusChip, WaitBadge } from "./ui";
 import { agentStatus } from "./util";
 import { UsageBlock } from "./components/ContextPanel";
@@ -42,7 +42,7 @@ function Shell() {
   const live = useLiveStatus();
   const threads = useThreads(app.workspace);
   const perms = usePermissions(app.workspace);
-  const waiting = (threads.data ?? []).filter((t) => t.waiting_on_you).length + (perms.data ?? []).length;
+  const waiting = (threads.data ?? []).filter((t) => t.waiting_on_you).length + (perms.data ?? []).length + (useLearningProposals(app.workspace).data ?? []).length;
   const loc = useLocation();
 
   // Scroll to #msg-<id> once the thread timeline has rendered.

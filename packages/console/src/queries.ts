@@ -36,3 +36,9 @@ export const useAgentSettings = (ws: string | null, id: string | undefined) => u
 export const useSchedules = (ws: string | null) => useQuery({ queryKey: ["schedules", ws], queryFn: () => api.schedules(ws!), enabled: !!ws, placeholderData: keepPreviousData });
 export const useScheduleCalendar = (ws: string | null, from: string, to: string, enabled = true) =>
   useQuery({ queryKey: ["schedules", ws, "calendar", from, to], queryFn: () => api.scheduleCalendar(ws!, from, to), enabled: !!ws && enabled, placeholderData: keepPreviousData });
+
+// Learning: everything lives under ["learning", ws, ...] so one SSE invalidation refreshes it all.
+export const useAgentMemory = (ws: string | null, id: string) => useQuery({ queryKey: ["learning", ws, "memory", id], queryFn: () => api.agentMemory(ws!, id), enabled: !!ws });
+export const useAgentLearning = (ws: string | null, id: string) => useQuery({ queryKey: ["learning", ws, "history", id], queryFn: () => api.learning(ws!, id), enabled: !!ws });
+export const useKnowledge = (ws: string | null) => useQuery({ queryKey: ["learning", ws, "knowledge"], queryFn: () => api.knowledge(ws!), enabled: !!ws });
+export const useLearningProposals = (ws: string | null) => useQuery({ queryKey: ["learning", ws, "proposals"], queryFn: () => api.learningProposals(ws!, "pending"), enabled: !!ws, placeholderData: keepPreviousData, refetchInterval: 30_000 });

@@ -171,9 +171,22 @@ export interface AgentSettings {
   prompt: string;
   permissions: { allow?: string[]; ask?: string[]; deny?: string[] };
   credentials: HostCredential[];
+  learning?: { require_approval: boolean };
+}
+export interface HistoryEntry { commit: string; at: string; author: string; subject: string; body: string; files: { status: "A" | "M" | "D"; path: string }[] }
+export interface MemoryFile { path: string; content: string }
+export interface SkillRow { name: string; files: MemoryFile[] }
+export interface AgentMemory { memory: MemoryFile[]; skills: SkillRow[] }
+export interface Knowledge { content: string; history: HistoryEntry[] }
+export interface LearningProposal {
+  id: string; agent_id: string; thread_id: string | null;
+  action: "remember" | "forget" | "save_skill" | "remove_skill";
+  name: string; content: string | null; reason: string | null;
+  state: "pending" | "approved" | "rejected"; comment: string | null; commit: string | null;
+  created_at: string; decided_at: string | null;
 }
 export interface AgentCreate { id: string; name: string; role: string; default_model: ModelName; accepts_from?: string[]; prompt?: string }
-export type AgentPatch = Partial<Omit<AgentCreate, "id">>;
+export type AgentPatch = Partial<Omit<AgentCreate, "id">> & { require_learning_approval?: boolean };
 
 export type ScheduleStatus = "upcoming" | "running" | "needs_you" | "done" | "failed" | "skipped";
 export interface ScheduleLastRun { at: string; status: ScheduleStatus; reason: string | null; thread_id: string | null }
@@ -251,6 +264,26 @@ export const api = {
     request<HostCredential>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "PUT", body: JSON.stringify({ token }) }),
   deleteAgentCredential: (ws: string, id: string, provider: HostProvider) =>
     request<void>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/credentials/${enc(provider)}`, { method: "DELETE" }),
+  knowledge: (ws: string) => request<Knowledge>(`/api/workspaces/${enc(ws)}/knowledge`),
+  saveKnowledge: (ws: string, content: string) =>
+    request<{ commit: string }>(`/api/workspaces/${enc(ws)}/knowledge`, { method: "PUT", body: JSON.stringify({ content }) }),
+  agentMemory: (ws: string, id: string) => request<AgentMemory>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/memory`),
+  saveMemory: (ws: string, id: string, name: string, b: { content: string; reason?: string }) =>
+    request<{ commit: string }>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/memory/${enc(name)}`, { method: "PUT", body: JSON.stringify(b) }),
+  deleteMemory: (ws: string, id: string, name: string) =>
+    request<{ commit: string }>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/memory/${enc(name)}`, { method: "DELETE" }),
+  deleteSkill: (ws: string, id: string, name: string) =>
+    request<{ commit: string }>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/skills/${enc(name)}`, { method: "DELETE" }),
+  learning: (ws: string, id: string) => request<HistoryEntry[]>(`/api/workspaces/${enc(ws)}/agents/${enc(id)}/learning`),
+  learningDiff: (ws: string, commit: string) => request<{ diff: string }>(`/api/workspaces/${enc(ws)}/learning/${enc(commit)}`),
+  undoLearning: (ws: string, commit: string, reason?: string) =>
+    request<{ commit: string }>(`/api/workspaces/${enc(ws)}/learning/${enc(commit)}/undo`, { method: "POST", body: JSON.stringify(reason ? { reason } : {}) }),
+  learningProposals: (ws: string, state: "pending" | "approved" | "rejected" | "all" = "pending") =>
+    request<LearningProposal[]>(`/api/workspaces/${enc(ws)}/learning-proposals?state=${state}`),
+  decideProposal: (id: string, b: { decision: "approve" | "reject"; comment?: string }) =>
+    request<LearningProposal>(`/api/learning-proposals/${enc(id)}/decide`, { method: "POST", body: JSON.stringify(b) }),
+  reflect: (threadId: string, agent?: string) =>
+    request<{ agents: string[] }>(`/api/threads/${enc(threadId)}/reflect`, { method: "POST", body: JSON.stringify(agent ? { agent } : {}) }),
   schedules: (ws: string) => request<Schedule[]>(`/api/workspaces/${enc(ws)}/schedules`),
   scheduleCalendar: (ws: string, from: string, to: string) =>
     request<ScheduleCalendar>(`/api/workspaces/${enc(ws)}/schedules/calendar?from=${enc(from)}&to=${enc(to)}`),

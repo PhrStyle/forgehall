@@ -6,6 +6,7 @@ import { useApp } from "../context";
 import { useAccounts, usePublishing, useRepos, useSettings, useSupervisor } from "../queries";
 import { ago, slugify } from "../util";
 import { TokenInput } from "../components/TokenInput";
+import { KnowledgeSection } from "../components/Learning";
 import { AddRepoModal, HOST_LABEL } from "../components/AddRepoModal";
 import { Chip, ErrorBox, Icon, ModelChip } from "../ui";
 import { FieldError, focusFirstInvalid } from "../components/formErrors";
@@ -412,7 +413,7 @@ function RoutingSection() {
   );
 }
 
-type SectionKey = "general" | "repositories" | "publishing" | "accounts" | "isolation" | "workspaces" | "routing" | "status";
+type SectionKey = "general" | "knowledge" | "repositories" | "publishing" | "accounts" | "isolation" | "workspaces" | "routing" | "status";
 
 export function Settings() {
   const app = useApp();
@@ -423,6 +424,7 @@ export function Settings() {
 
   const WORKSPACE: [SectionKey, string, string, ReactNode][] = [
     ["general", "General", wsScope, <GeneralSection />],
+    ["knowledge", "Knowledge", `${wsScope}. Delivered to every agent.`, <KnowledgeSection />],
     ["repositories", "Repositories", `${wsScope}. Agents work on code from these.`, <ReposSection />],
     ["publishing", "Publishing", `${wsScope}. How approved work is published.`, <PublishingSection />],
   ];
