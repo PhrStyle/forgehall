@@ -114,7 +114,7 @@ The console creates and edits workspaces and agents through these endpoints. The
 | `POST /api/workspaces` | `{id, name}` | Creates a workspace. 201 with `{id, name}`. 400 if it exists |
 | `POST /api/workspaces/:ws/agents` | `{id, name, role, default_model, accepts_from?, prompt?}` | Creates an agent. 201 with AgentSettings. 400 if it exists |
 | `GET /api/workspaces/:ws/agents/:id/settings` | none | AgentSettings |
-| `PATCH /api/workspaces/:ws/agents/:id` | Any subset of `{name, role, default_model, accepts_from, prompt}` | Updates the agent. Returns AgentSettings |
+| `PATCH /api/workspaces/:ws/agents/:id` | Any subset of `{name, role, default_model, accepts_from, prompt, require_learning_approval}` | Updates the agent. Returns AgentSettings |
 | `PUT /api/workspaces/:ws/agents/:id/credentials/:provider` | `{token}` | Stores the agent's host token. Returns `{provider, token_hint, created_at}` |
 | `DELETE /api/workspaces/:ws/agents/:id/credentials/:provider` | none | Removes the agent's host token. 204 |
 | `POST /api/workspaces/:ws/agents/:id/start` | none | Sets the desired state to `running`. 204. The supervisor starts the container within seconds |
@@ -125,7 +125,8 @@ The console creates and edits workspaces and agents through these endpoints. The
 - `default_model`: `haiku`, `sonnet` or `opus`. `role`, `name` and `prompt` are free text.
 - `accepts_from`: an empty list means any agent may send requests to the agent; otherwise only the listed agents. You can always write to it.
 - `provider` is `github` or `azure-devops`. Whitespace is removed from `token`; a token under 20 characters is refused.
-- AgentSettings: `{id, name, role, default_model, accepts_from, prompt, permissions: {allow?, ask?, deny?}, credentials: [{provider, token_hint, created_at}]}`. Tokens are never returned.
+- `require_learning_approval`: boolean. `true` turns the agent's memory and skill changes into proposals (see [Learning](#learning)). Default `false`.
+- AgentSettings: `{id, name, role, default_model, accepts_from, prompt, permissions: {allow?, ask?, deny?}, credentials: [{provider, token_hint, created_at}], learning: {require_approval}}`. Tokens are never returned.
 - Creating an agent sets its desired state to `running`, so a running supervisor starts its container. The bus has no Docker access and never starts containers itself; you can also start one with `fh agent run <ws> <id>`.
 
 ### Agent containers and the supervisor
@@ -346,9 +347,48 @@ curl -s -X PATCH http://127.0.0.1:4545/api/settings \
   -H 'content-type: application/json' -d '{"allow_host_runners":true}'
 ```
 
+## Learning
+
+**Status: implemented.** Agents change their own memory and skills; each change is a commit in the workspace's data repository (`$FORGEHALL_HOME/workspaces/<ws>/`), with the agent as author and the reason in the message. You can edit, undo and gate them here. Concepts: [Learning and data](../concepts/learning-and-data.md); decisions: [ADR 0010](../adr/0010-automatic-learning-with-history.md).
+
+| Endpoint | Body | Effect |
+|---|---|---|
+| `GET /api/workspaces/:ws/knowledge` | none | `{content, history}`: the shared knowledge (`knowledge.md`) and its last 20 changes |
+| `PUT /api/workspaces/:ws/knowledge` | `{content}` (max 32,000 chars) | Saves the shared knowledge and commits it as `you`. Returns `{commit}` |
+| `GET /api/workspaces/:ws/agents/:id/memory` | none | `{memory, skills}`: the agent's memory files and skills |
+| `PUT /api/workspaces/:ws/agents/:id/memory/:name` | `{content, reason?}` (content max 16,000 chars) | Creates or replaces a memory as `you`. Returns `{commit}` |
+| `DELETE /api/workspaces/:ws/agents/:id/memory/:name` | none | Deletes a memory as `you`. Returns `{commit}` |
+| `DELETE /api/workspaces/:ws/agents/:id/skills/:name` | none | Removes a skill as `you`. Returns `{commit}` |
+| `GET /api/workspaces/:ws/agents/:id/learning` | none | The agent's history, newest first (up to 200 commits) |
+| `GET /api/workspaces/:ws/learning/:commit` | none | `{diff}`: the patch of one commit |
+| `POST /api/workspaces/:ws/learning/:commit/undo` | `{reason?}` | Adds a revert commit (`Undo: <subject>`). Returns `{commit}`. Refused with `409` if the revert does not apply |
+| `GET /api/workspaces/:ws/learning-proposals?state=` | none | Proposals in that state (`pending` by default, or `approved`, `rejected`, `all`), newest first |
+| `POST /api/learning-proposals/:id/decide` | `{decision: "approve" \| "reject", comment?}` | Approving applies the change and commits it; rejecting drops it. `409` if the proposal is not pending |
+| `POST /api/threads/:id/reflect` | `{agent?}` | Starts a reflection for the thread's agents (or only `agent`), even if the thread did not qualify. Returns `{agents}`: the agent ids that were asked to reflect |
+
+Memory and skill names follow the same rule as the agent tools: lowercase letters, digits and `-`, up to 64 characters.
+
+History entry (`GET .../agents/:id/learning`):
+
+```json
+[{"commit": "3f9a2c1d...", "at": "2026-10-15T09:12:44+00:00", "author": "atlas",
+  "subject": "atlas remembered coupon-stacking", "body": "user corrected the stacking assumption\n\nThread: THR-0012",
+  "files": [{"status": "A", "path": "agents/atlas/memory/coupon-stacking.md"}]}]
+```
+
+`author` is the agent id, or `you` for a change made in the console. `files[].status` follows git (`A` added, `M` modified, `D` deleted).
+
+```bash
+curl -s -X POST http://127.0.0.1:4545/api/learning-proposals/5/decide \
+  -H "Authorization: Bearer $(cat ~/.forgehall/admin-token)" \
+  -H 'content-type: application/json' -d '{"decision":"approve"}'
+```
+
+Agent settings: `PATCH /api/workspaces/:ws/agents/:id` with `{"require_learning_approval": true}` sets "Ask before saving to memory". Learning changes are sent on the live stream as kind `learning`.
+
 ## Live changes: `GET /api/events?workspace=dev`
 
-A server-sent events stream. Each event is named after the change kind (`thread`, `message`, `run`, `run_event`, `agent`, `permission`, `schedule`) and a JSON `data` with the workspace, thread and ids involved; comments (`: ping`) keep the connection open every 25 seconds. Omit `workspace` to receive every workspace. The console uses it to refetch what changed.
+A server-sent events stream. Each event is named after the change kind (`thread`, `message`, `run`, `run_event`, `agent`, `permission`, `schedule`, `learning`) and a JSON `data` with the workspace, thread and ids involved; comments (`: ping`) keep the connection open every 25 seconds. Omit `workspace` to receive every workspace. The console uses it to refetch what changed.
 
 ```text
 event: run

@@ -1,6 +1,8 @@
 # Learning and data
 
-**Everything on this page is planned**, except that `FORGEHALL_HOME` already holds the git [staging remotes](workspaces.md#repositories-and-the-staging-remote) (`staging/<ws>/<repo>.git`). Phase 1 stores threads, messages, runs and usage in Postgres and nothing else. Agents have no persistent memory or skills managed by Forgehall yet, and there is no backup tooling.
+Status: **learning and memory are implemented** (memory and skills, reflection, shared knowledge, history with undo, optional approval, console). **Planned:** version tags and rollback, weekly consolidation, daily encrypted backup, and agents defined as files. Each planned item is marked below.
+
+Agents change their own memory and skills through bus tools. Each change is a commit in the workspace's local git repository, which you can see, undo or gate. Decisions and their trade-offs: [ADR 0010](../adr/0010-automatic-learning-with-history.md), which refines [ADR 0006](../adr/0006-local-git-for-agent-data.md).
 
 ## Code and data stay apart
 
@@ -9,46 +11,74 @@ The project is open source, so code and personal data never mix.
 | | Where | Versioned as |
 |---|---|---|
 | Code (bus, runner, console, templates) | the public repository | git, as usual |
-| Data (workspaces, agents, memory, skills, knowledge, database) | `FORGEHALL_HOME` (default `~/.forgehall`) | local git with no remote, one repository per workspace |
+| Data (workspaces, agent memory and skills, shared knowledge) | `FORGEHALL_HOME` (default `~/.forgehall`) | local git with no remote, one repository per workspace (implemented) |
 
 ```text
 ~/.forgehall/
-  config.yaml            accounts, backup, preferences (no secrets)
-  secrets/               encrypted tokens, or the system keyring
   workspaces/
-    personal/  (.git)    workspace.yaml, agents/, skills/, knowledge/
-    work/      (.git)
-  postgres/              database volume
-  backups/
+    dev/  (.git)           implemented: created on first use
+      knowledge.md         shared knowledge, written by you
+      agents/
+        atlas/
+          memory/<name>.md
+          skills/<name>/SKILL.md
+  staging/                 git staging remotes (implemented)
+  secrets/                 tokens (implemented)
+  config.yaml              planned: accounts, backup, preferences
+  postgres/                planned: database volume
+  backups/                 planned
 ```
 
-## Why git, locally
+The bus creates a workspace's repository on first use and is the only writer. Agents never write to the repository directly.
 
-The learning flow needs four things git already does:
+## What an agent can learn
 
-| Need | With local git | Without it |
+| File | Who writes it | Limits |
 |---|---|---|
-| See exactly what an agent wants to learn | `git diff` | write a text diff |
-| Keep a proposal separate until approved | a `learn/<agent>/<thread>` branch | a drafts table and merge logic |
-| Undo one bad learning, or roll an agent back to a version | `git revert`, `git tag forge-v3` | restore a whole backup, losing the rest |
-| Know when and why something was learned | `git log` with the thread id in the commit | custom audit |
+| `knowledge.md` (one per workspace) | You, in the console (Settings → Workspace → Knowledge) | 32 KB |
+| `agents/<id>/memory/<name>.md` | The agent, through `remember` and `forget` | 16 KB per file, 60 files per agent |
+| `agents/<id>/skills/<name>/SKILL.md` | The agent, through `save_skill` and `remove_skill` | 16 KB per file, 10 files per skill |
 
-The cost is a few MB, no network and no hosted service. Git is a history engine here, not hosting. See [ADR 0006](../adr/0006-local-git-for-agent-data.md).
+Names are lowercase letters, digits and `-`, up to 64 characters. Knowledge is shared by every agent of the workspace. Memory and skills belong to one agent. Agents never write shared knowledge: shared conventions are your decision.
 
 ## Learning flow
 
-1. During runs, Claude Code's automatic memory writes into the agent's `memory/` directory on its `agent/<id>` branch.
-2. When a thread completes, a reflection run is scheduled for each participant: what is worth keeping, and should a repeated procedure become a skill? The agent edits `memory/` and `skills/`.
-3. The runner commits to `learn/<id>/<thread>` and the bus creates a `learning` approval with the diff.
-4. Approve and the bus merges into `main`. Reject and your comment becomes feedback memory for the agent, and the branch is dropped.
-5. Weekly consolidation, through the same approval flow, merges duplicates and removes stale memories.
-6. `git tag <id>-vN` marks agent versions. Reverting to a tag also needs approval.
+1. **During a thread**, the agent calls `remember`, `forget`, `save_skill` or `remove_skill` with a reason and the thread id. The bus checks the name, size and count.
+2. **By default the change applies at once.** The bus commits it to the workspace repository with the agent as author, the reason and `Thread: THR-…` in the message. It is in the agent's memory from its next run.
+3. **Optional gate.** With "Ask before saving to memory" on in the agent's Settings (off by default), the change becomes a proposal instead. You approve or reject it in the Inbox (Learning proposals). Nothing is written until you approve.
+4. **Reflection after a thread closes.** When a thread reaches `done` through `complete`, each agent that sent messages in it gets a reflection notice and a run on its default model, if:
+   - you sent it a decision or an answer,
+   - a review it asked for failed,
+   - it asked you a question, or
+   - it had three or more finished runs.
 
-Skills use the standard `SKILL.md` format. A skill is promoted only within its workspace, never into another.
+   Each agent reflects once per thread. In the console, **Learn from this thread** starts it on demand.
+5. **Delivery.** Before every run the runner writes the knowledge and the agent's memory to `~/.claude/CLAUDE.md`, and each skill to `~/.claude/skills/<name>/`, inside the agent's container. Claude Code loads them in every session. Host runs skip this step, so the user's own `~/.claude` is never overwritten.
+6. **History and undo.** The console's agent page shows **History**: who changed what, why, the thread, the files, and the diff. **Undo** adds a revert commit. Nothing is deleted from the history.
 
-## Backup
+The default trades prevention for visibility: a bad memory is visible and reversible after the fact. Use the approval gate for agents that read untrusted content, such as repositories or issues, because text they read could try to plant instructions in their memory.
 
-A daily job produces, per workspace:
+## Why git, locally
+
+| Need | With local git | Without it |
+|---|---|---|
+| See exactly what changed | `git diff` (the console's diff view) | a custom diff |
+| Undo one learning | a revert commit | restoring a whole backup |
+| Know when and why | `git log` with the reason and thread id | custom audit |
+| Attribute a change | the agent as commit author | a custom field |
+
+The cost is a few MB, no network and no hosted service. Git is a history engine here, not hosting.
+
+## Planned
+
+- **Version tags and rollback.** `git tag <id>-vN` marks an agent's version; reverting to a tag is planned, and would need approval.
+- **Weekly consolidation.** A reflection pass that merges duplicate memories and removes stale ones, through the same approval gate.
+- **Agents defined as files.** `agent.yaml` and role templates in the workspace repository.
+- **Daily backup,** described below.
+
+## Backup (planned)
+
+A planned daily job produces, per workspace:
 
 - `git bundle create --all`, a single file with full history (restore with `git clone file.bundle`),
 - a `pg_dump` of that workspace's threads, messages and runs,

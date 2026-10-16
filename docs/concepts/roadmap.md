@@ -7,7 +7,7 @@ Forgehall is built in phases. Each phase ends with something you can run.
 | **F1** Bus | Bus with MCP and Postgres; runner for one agent; CLI to send messages | A message wakes the agent, it answers through MCP and a second run resumes the session |
 | **F2** Conversation | Vigil and atlas; thread states and `complete`; workspaces; `local` provider and staging remote; `merge` approval policy; `work_touching`; [schedules](schedules.md) | Both flows run end to end on a local test repository |
 | **F3** Console and providers | React console on the bus with live updates; `azure-devops` and `github` adapters | You approve in the console and the pull request appears on the provider |
-| **F4** Learning | Reflection, `learn/*` branches, review tab, consolidation | A proposed memory is approved and used in the next run |
+| **F4** Learning | Memory and skills with history and undo, reflection, shared knowledge, optional approval ([ADR 0010](../adr/0010-automatic-learning-with-history.md)); version tags, consolidation, backup | An agent keeps what it learned and uses it in the next run |
 | **F5** VMs | Incus, network allowlist, snapshots | The F2 tests pass with agents in VMs |
 | **F6** Extras | Notifications when something waits on you (browser, then a chat app such as Telegram), more agents (research, writing, data) | n/a |
 
@@ -68,3 +68,22 @@ Remaining:
 - Console polish: a second column on the Team page for wide screens (upcoming schedules, what needs you, open pull requests); the thread composer as wide as the conversation; one status per agent in the sidebar (it still shows the state twice); on a done or cancelled thread, the composer says that sending a message reopens the thread
 - Before the public release: one-step install. `fh setup` checks the requirements (Node 22, pnpm, Docker, the Claude Code CLI) and says how to install what is missing, starts the stack, builds the runner image and installs the supervisor by default (`--no-supervisor` to skip); supervisor services for macOS (`launchd`) as well as Linux (systemd), and Windows through WSL2
 - With the first stable release: git tags for the milestones (bus, console, repositories and approvals, isolation, providers, supervisor, real pull requests) and a `scripts/demo.sh <tag>` that runs any of them with its own database, data directory, ports and sample data, to show how the project evolved
+
+## Phase 4 status
+
+Done (learning, see [ADR 0010](../adr/0010-automatic-learning-with-history.md)):
+
+- Workspace data repository: one local git repository per workspace under `$FORGEHALL_HOME/workspaces/<ws>/`, created on first use; only the bus writes it
+- Shared workspace knowledge (`knowledge.md`), written by you in the console and delivered to every agent
+- Agent memory and skills with the tools `remember`, `forget`, `save_skill` and `remove_skill`; each change is committed at once with the agent as author, the reason and the thread
+- Optional approval per agent ("Ask before saving to memory", off by default), with proposals approved or rejected in the Inbox
+- Reflection when a thread completes, once per agent and thread, and "Learn from this thread" on demand
+- Delivery: before each isolated run the runner writes the knowledge, memory and skills into `~/.claude`; host runs skip it
+- Console: agent Memory, Skills and History tabs (diff and Undo), Settings → Workspace → Knowledge
+
+Remaining:
+
+- Version tags and rollback to a version (`git tag`; a rollback needs approval)
+- Consolidation: a periodic pass that merges duplicate memories and removes stale ones, through the approval gate
+- Daily encrypted backup of the workspace repositories and their databases
+- Agents defined as files in the workspace repository

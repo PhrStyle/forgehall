@@ -4,11 +4,11 @@ A self-hosted team of persistent Claude Code agents that talk to each other, lea
 
 ![Forgehall console: a thread where the QA agent asks the developer agent a question and reports back, with each run, model and cost](docs/assets/console-thread.png)
 
-Forgehall runs a fixed team of agents (QA, development, research and so on) that you define per workspace, such as `personal` and `work`. Agents exchange messages through their own bus, so work is organised as threads with a history instead of loose chat. Each message wakes the right agent with the official Claude Code CLI, using a model chosen for that task. Anything that matters, such as merging code or saving something to an agent's memory, waits for a human decision. It runs on your machine, with your own Claude subscription.
+Forgehall runs a fixed team of agents (QA, development, research and so on) that you define per workspace, such as `personal` and `work`. Agents exchange messages through their own bus, so work is organised as threads with a history instead of loose chat. Each message wakes the right agent with the official Claude Code CLI, using a model chosen for that task. Anything that matters, such as merging code, waits for a human decision. What agents learn is saved to their memory and skills automatically, with a history you can undo; you can require approval per agent. It runs on your machine, with your own Claude subscription.
 
 ## Status
 
-Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with live updates) and phase 2 has started: you can register a git repository, let an agent work on a branch of it, review the diff and approve a merge into your upstream. Agents run isolated in Docker containers by default, and tool uses that no rule covers wait for your answer in the console. GitHub and Azure DevOps adapters, pull-request policies and learning come next. See the [roadmap](docs/concepts/roadmap.md).
+Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with live updates) and phase 2 has started: you can register a git repository, let an agent work on a branch of it, review the diff and approve a merge into your upstream. Agents run isolated in Docker containers by default, and tool uses that no rule covers wait for your answer in the console. GitHub and Azure DevOps adapters and pull-request policies come next. Agent memory and skills work; version tags, consolidation and backups are planned. See the [roadmap](docs/concepts/roadmap.md).
 
 ## How it works
 
@@ -25,14 +25,15 @@ Early development. Phase 1 is complete (bus, runner, `fh` CLI, web console with 
 |---|---|
 | Postgres-backed bus with threads, messages, runs, run events | `pull_request` and `branch_only` approval policies |
 | Web console: team, threads, live run activity, usage, new tasks | Notifications outside the console (browser, chat app) |
-| Retries with backoff, blocked threads, stale-run recovery | Agent memory, skills and reflection |
+| Retries with backoff, blocked threads, stale-run recovery | |
+| Agent memory and skills in a local git repository per workspace (`remember`, `forget`, `save_skill`, `remove_skill`), shared knowledge you write, reflection after threads, history with undo, optional approval per agent | |
 | MCP tools for agents: `request`, `ask`, `answer`, `verify`, `request_approval`, `notify`, `escalate`, `complete`, `thread_read`, `threads_list` | `inbox`, `attach`, `prs_list`, `work_touching` |
 | Per-agent tokens and workspace-scoped tools | `accepts_from` enforced beyond `request` |
 | Thread state machine driven by message type | Repository providers (GitHub, Azure DevOps) |
 | Repositories (`fh repo add`): staging remote, a branch per thread, diff review in the console, approval that merges into your upstream (`local` provider, `merge` policy) | Multiple Claude accounts per workspace |
 | Deterministic model routing with recorded reason | Per-account concurrency, preventive pause near limits |
-| Priority queue, per-workspace concurrency cap, one run per thread | Learning branches, reflection, consolidation |
-| Session resume per agent and thread | Local git for agent data, daily encrypted backup |
+| Priority queue, per-workspace concurrency cap, one run per thread | Memory consolidation |
+| Session resume per agent and thread | Version tags and rollback, daily encrypted backup, agents as files |
 | Schedules: repeat rules, day to year calendar in the console, overlap and usage guards | |
 | Real usage read from `rate_limit_event` | Incus VMs, network allowlists |
 | `fh` CLI for workspaces, agents, repositories, threads, runs, usage | |

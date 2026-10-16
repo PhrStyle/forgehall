@@ -1,6 +1,6 @@
 # 0006. Local git for agent data
 
-- Status: Accepted (design; not implemented in phase 1)
+- Status: Accepted (repository, history and undo implemented; per-learning approval became optional, see ADR 0010; tags, consolidation and backup planned)
 - Date: 2026-10-13
 
 ## Context
@@ -26,4 +26,4 @@ Keep **code and data apart**. Data (workspaces, agent definitions, memory, skill
 - Review, revert and history come from git at almost no cost (a few MB, no network).
 - Each workspace has its own repository, backup destination and key, which supports [workspace isolation](0004-workspace-isolation.md).
 - Users must back up; a local-only repository does not survive disk loss, hence the default daily backup. Backups hold sensitive content, hence encryption.
-- Nothing in this ADR is built yet; phase 1 stores only bus data in Postgres.
+- The repository, history and undo are built; per-learning approval became an option ([ADR 0010](0010-automatic-learning-with-history.md)); tags, consolidation and backup are still planned.

@@ -1,6 +1,6 @@
 # Workspaces
 
-A workspace is an isolated working context, such as `personal` or `work`. It has its own agents, threads, credentials, repositories, approval policy and (planned) memory and Claude account. Nothing crosses from one workspace to another.
+A workspace is an isolated working context, such as `personal` or `work`. It has its own agents, threads, credentials, repositories, approval policy, Claude account, shared knowledge, and agents with their memory and skills. Nothing crosses from one workspace to another.
 
 Legend: **[now]** implemented, **[planned]** not built yet.
 
@@ -15,7 +15,7 @@ Legend: **[now]** implemented, **[planned]** not built yet.
 
 **[now]** Each agent runs in its own container (`fh agent run`), see [Isolation and permissions](isolation-and-permissions.md).
 
-**[planned]** Isolation of everything around the bus: VMs per agent, git credentials per workspace, memory and skills in a separate local git repository per workspace, and the workspace's share of the account's weekly limit. See [ADR 0004](../adr/0004-workspace-isolation.md).
+**[now]** Memory, skills and shared knowledge live in a separate local git repository per workspace ([Learning and data](learning-and-data.md)). **[planned]** VMs per agent and the workspace's share of the account's weekly limit. See [ADR 0004](../adr/0004-workspace-isolation.md).
 
 ## Agents
 

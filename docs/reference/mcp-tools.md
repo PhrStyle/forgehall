@@ -185,6 +185,87 @@ Effect: none (read-only).
 {"name": "threads_list", "arguments": {"state": "in_progress"}}
 ```
 
+## Learning tools
+
+Change the caller's own memory and skills. By default the bus applies each change at once. If the agent's "Ask before saving to memory" setting is on, the change becomes a proposal that the user approves or rejects in the Inbox. Agents never write the repository directly: the bus validates the input and commits. See [Learning and data](../concepts/learning-and-data.md#learning-flow) and [ADR 0010](../adr/0010-automatic-learning-with-history.md).
+
+Common rules:
+
+- `name` is lowercase letters, digits and `-`, 1 to 64 characters, starting with a letter or digit (for example `coupon-seed`).
+- `reason` (min 3 characters) is recorded in the commit message, with the thread id when given.
+- `thread_id` is optional and must be a thread in the caller's workspace.
+- Limits: 16 KB per file, 60 memory files per agent, 10 files per skill. Over a limit, the tool returns an error the agent can react to.
+- The agent's shared knowledge (`knowledge.md`) is not writable through these tools.
+
+Result: when applied, the text says the change is in memory from the next run; when gated, it says the proposal id and that it applies after the user approves.
+
+### `remember`
+
+Creates a memory, or replaces the one with the same name. For facts about the codebase or tools, and for corrections and preferences from the user. Keep it short and general.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | See common rules |
+| `content` | string (1 to 4000 chars) | yes | Markdown |
+| `reason` | string (min 3) | yes | Why this is worth keeping |
+| `thread_id` | string | no | The thread it comes from |
+
+Effect: writes `agents/<id>/memory/<name>.md` and commits it with the agent as author.
+
+```json
+{"name": "remember", "arguments": {"name": "coupon-stacking", "content": "Coupons do not stack. Apply the larger discount only; see pricing/coupons.ts.", "reason": "user corrected the stacking assumption", "thread_id": "THR-0012"}}
+```
+
+### `forget`
+
+Deletes a memory that is wrong or outdated.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | An existing memory |
+| `reason` | string (min 3) | yes | |
+| `thread_id` | string | no | |
+
+Effect: removes `agents/<id>/memory/<name>.md` in a commit. The history keeps the old content; the user can undo it.
+
+```json
+{"name": "forget", "arguments": {"name": "coupon-stacking", "reason": "pricing rules changed in THR-0020", "thread_id": "THR-0020"}}
+```
+
+### `save_skill`
+
+Saves a procedure the agent worked out and will need again, as a Claude Code skill (`SKILL.md`). Using an existing name replaces the skill.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | Also the skill's directory name |
+| `description` | string (10 to 300 chars) | yes | When to use the skill, for example `Use when releasing checkout-app: version bump, changelog, tag` |
+| `instructions` | string (10 to 12,000 chars) | yes | The steps, in Markdown |
+| `reason` | string (min 3) | yes | |
+| `thread_id` | string | no | |
+
+Effect: writes `agents/<id>/skills/<name>/SKILL.md` with frontmatter `name` and `description`, followed by the instructions.
+
+```json
+{"name": "save_skill", "arguments": {"name": "release-checkout", "description": "Use when releasing checkout-app: version bump, changelog entry, tag", "instructions": "1. Bump the version in package.json.\n2. Add a CHANGELOG entry under the new version.\n3. Tag with vX.Y.Z and push the tag.", "reason": "the release took three attempts in THR-0031", "thread_id": "THR-0031"}}
+```
+
+### `remove_skill`
+
+Removes a skill that is wrong or no longer useful.
+
+| Parameter | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | yes | An existing skill |
+| `reason` | string (min 3) | yes | |
+| `thread_id` | string | no | |
+
+Effect: removes `agents/<id>/skills/<name>/` in a commit.
+
+```json
+{"name": "remove_skill", "arguments": {"name": "release-checkout", "reason": "the release process moved to CI"}}
+```
+
 ## `permission` (internal)
 
 Not for agents. Claude Code calls it itself (`--permission-prompt-tool mcp__bus__permission`) when a tool use is neither allowed nor denied by the run's rules. Agents should not call it and need not know it exists.

@@ -47,6 +47,8 @@ The bus checks for work every second for up to `CLAIM_WAIT_MS`. It returns `204 
   "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(ls *)", "..."],
   "permissions": {"allow": ["Read", "..."], "ask": ["Bash(npm install *)", "..."], "deny": ["Bash(sudo *)", "..."]},
   "hostAccess": [],
+  "context": {"knowledge": "Use pnpm, not npm.", "memory": [{"path": "memory/coupon-stacking.md", "content": "Coupons do not stack."}], "skills": []},
+  "repo": null,
   "runnerMode": "container"
 }
 ```
@@ -61,7 +63,18 @@ The bus checks for work every second for up to `CLAIM_WAIT_MS`. It returns `204 
 | `allowedTools` | string[] | Engine tools allowed without asking, in addition to `mcp__bus__*`. Same as `permissions.allow` |
 | `permissions` | `{allow, ask, deny}` | Tool rules in Claude Code syntax for this run, from the mode's defaults plus the agent's additions. For `host` runs `allow` is empty. The runner passes them to Claude Code with `--settings`; see [Isolation and permissions](../concepts/isolation-and-permissions.md#tool-permissions) |
 | `hostAccess` | `[{provider, token}]` | The agent's host tokens, `provider` is `github` or `azure-devops`. Default `[]`. The runner maps them to fixed environment variables for the engine: `github` gives `GH_TOKEN` and `GITHUB_TOKEN`, `azure-devops` gives `AZURE_DEVOPS_EXT_PAT`. A claim cannot set other variables. See [Host access per agent](../concepts/workspaces.md#host-access-per-agent) |
+| `context` | `{knowledge, memory, skills}` | What the agent knows, delivered with every run. `knowledge` is the workspace's shared Markdown (`knowledge.md`, written by the user). `memory` is `[{path, content}]`, the agent's memory files, with `path` relative to the agent's folder (for example `memory/coupon-stacking.md`). `skills` is `[{name, files}]`, each skill's files as `[{path, content}]`, with `path` relative to the skill folder (for example `SKILL.md`). Default: empty. See [What the runner does with `context`](#what-the-runner-does-with-context) |
+| `repo` | `{id, base, branch}` \| null | The repository checkout for the run; null for threads without one |
 | `runnerMode` | `container` \| `vm` \| `host` | The mode the claim was made with |
+
+### What the runner does with `context`
+
+**Status: implemented.** Before each run, in `container` and `vm` modes, the runner writes into the agent's home directory (`~` inside the container):
+
+- `~/.claude/CLAUDE.md`: the workspace knowledge under "Workspace knowledge", then the agent's memory under "Your memory". Claude Code loads it in every session, headless runs included.
+- `~/.claude/skills/<name>/`: each skill's files. Names that are not lowercase slugs are skipped, and so is any file whose path leaves its skill folder.
+
+Both are rewritten on every run and the skills folder is cleared first, so a forgotten memory or removed skill is gone from the next run on. The runner does not write anything from `context` in `host` mode, because that would overwrite the user's own `~/.claude`. If writing fails, the runner logs the error and runs the agent without the context. See [Learning and data](../concepts/learning-and-data.md#learning-flow).
 
 ## `POST /runner/runs/:id/events`
 

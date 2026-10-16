@@ -18,7 +18,7 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 - [Workspaces](concepts/workspaces.md): isolation, templates, repositories and the staging remote, approval policies, Claude accounts.
 - [Threads and messages](concepts/threads-and-messages.md): message types, the thread state machine, repository threads, approvals, the QA-to-merge flow.
 - [Model routing and limits](concepts/model-routing-and-limits.md): which model runs what, queue priorities, real usage readings.
-- [Learning and data](concepts/learning-and-data.md): agent memory in local git, approval of learnings, backups (planned).
+- [Learning and data](concepts/learning-and-data.md): agent memory and skills in local git, history and undo, optional approval, shared knowledge; backups (planned).
 - [Schedules](concepts/schedules.md): agents that run on a schedule (daily, weekly, monthly, yearly or once), with overlap and usage guards.
 - [Roadmap](concepts/roadmap.md): phases F1 to F6 and where phases 1 and 2 stand.
 
@@ -43,6 +43,7 @@ Organised by what you are trying to do. Everything marked "planned" in these pag
 - [ADR 0007: The runner handles git, the bus hosts a staging remote](adr/0007-runner-handles-git-and-staging-remote.md)
 - [ADR 0008: Isolated agents, the bus in the stack, and permission requests](adr/0008-isolated-agents-and-permission-requests.md)
 - [ADR 0009: Host access per agent](adr/0009-host-access-per-agent.md)
+- [ADR 0010: Automatic learning with a history, and shared knowledge written by the user](adr/0010-automatic-learning-with-history.md)
 
 ## Project
 
