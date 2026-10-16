@@ -180,7 +180,8 @@ export class AgentData {
         throw new AgentDataError(`cannot undo ${commit.slice(0, 7)}: a later change touches the same lines; undo that one first`);
       }
       const subject = (await git(repo, ["log", "-1", "--format=%s", commit])).trim();
-      await git(repo, ["commit", "--quiet", "-m", `Undo: ${subject}`, "-m", `${why}\n\nReverts ${commit}.`]);
+      // Undo is the user's action, from the console.
+      await git(repo, ["commit", "--quiet", "--author", "you <you@forgehall.invalid>", "-m", `Undo: ${subject}`, "-m", `${why}\n\nReverts ${commit}.`]);
       return (await git(repo, ["rev-parse", "HEAD"])).trim();
     });
   }

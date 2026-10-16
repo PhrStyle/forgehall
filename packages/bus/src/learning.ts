@@ -43,6 +43,13 @@ const SUBJECT: Record<LearningAction, (agent: string, name: string) => string> =
   remove_skill: (a, n) => `${a} removed the skill ${n}`,
 };
 
+const USER_SUBJECT: Record<LearningAction, (agent: string, name: string) => string> = {
+  remember: (a, n) => `You changed ${a}'s memory ${n}`,
+  forget: (a, n) => `You removed ${a}'s memory ${n}`,
+  save_skill: (a, n) => `You changed ${a}'s skill ${n}`,
+  remove_skill: (a, n) => `You removed ${a}'s skill ${n}`,
+};
+
 /** A SKILL.md with the frontmatter Claude Code needs (name, description). */
 export function skillFile(name: string, description: string, instructions: string): string {
   const desc = description.replace(/\s+/g, " ").trim().replace(/"/g, "'");
@@ -96,8 +103,10 @@ export class Learning {
       : c.action === "save_skill" ? { write: [{ path: `${base}/skills/${c.name}/SKILL.md`, content: c.content! }] }
       : { remove: [`${base}/skills/${c.name}`] };
     const body = [c.reason.trim(), c.threadId ? `Thread: ${c.threadId}` : ""].filter(Boolean).join("\n\n");
+    // The user's own edits read as such: "You changed atlas's memory coupon-seed".
+    const subject = author === "you" ? USER_SUBJECT[c.action](agentId, c.name) : SUBJECT[c.action](agentId, c.name);
     try {
-      const commit = await this.data.commit(workspaceId, changes, `${SUBJECT[c.action](agentId, c.name)}\n\n${body}`, author);
+      const commit = await this.data.commit(workspaceId, changes, `${subject}\n\n${body}`, author);
       await this.changed(workspaceId, agentId);
       return commit;
     } catch (e) {
